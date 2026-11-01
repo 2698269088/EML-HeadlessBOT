@@ -48,7 +48,7 @@ gradlew build
 
 顺序靠任务依赖保证：`Maven` 那套“依赖解析先于生命周期”的限制在 Gradle 里不存在，所以单模块即可完成“先生成、再编译”，不需要拆模块。
 
-依赖优先走国内镜像（阿里云 → 腾讯 → 华为），官方 Maven Central 作回退；`com.mojang:*` 只向 Mojang 官方仓库检索。Gradle 发行版同样从镜像下载（见 `gradle/wrapper/gradle-wrapper.properties`）。
+依赖与 Gradle 发行版都使用**官方源**（Maven Central、`services.gradle.org`）：本仓库同时由 JitPack 构建，境外访问国内镜像比官方源更慢。`com.mojang:*` 只向 Mojang 官方仓库检索。
 
 强制重新生成放宽视图：`gradlew generateOpenJar -Popenjar.force=true`
 

@@ -36,13 +36,8 @@ val openJar = layout.projectDirectory.file("libs/minecraft-$mcVersion-open.jar")
 val forceOpenJar = providers.gradleProperty("openjar.force").getOrElse("false")
 
 repositories {
-    // Domestic mirrors first. Gradle asks them in declaration order for every artifact, so putting them
-    // ahead of the official hosts is what makes the build prefer them.
-    maven("https://maven.aliyun.com/repository/public")
-    maven("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/")
-    maven("https://mirrors.huaweicloud.com/repository/maven/")
-
-    // Official Central, kept as the fallback for anything a mirror has not picked up yet.
+    // Official hosts only. A domestic mirror resolves faster locally, but the same build runs on JitPack,
+    // whose machines sit outside China: there the mirrors are slower than the hosts they mirror.
     mavenCentral()
 
     // The client's own libraries (com.mojang:logging, :blocklist) are published here and nowhere else, so
