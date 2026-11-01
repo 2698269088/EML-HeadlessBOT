@@ -24,9 +24,33 @@
 | `--server <host> --port <n>` | 启动后自动连接 |
 | `--online` | 正版验证模式 |
 | `--viewDistance <n>` | 上报给服务器的视距（默认 4，显著降低区块流量与卡顿） |
-| `--gameDir <dir>` | 运行目录（`plugins/`、`logs/`、`versions/`、`libraries/`、`lang/`、`debug/` 都在这里；**不要**在 `target/` 里跑，`mvn clean` 会连配置一起删） |
+| `--gameDir <dir>` | 运行目录（`plugins/`、`logs/`、`versions/`、`libraries/`、`lang/`、`debug/` 都在这里；**不要**在 `build/` 里跑，`gradlew clean` 会连配置一起删） |
 
 首次启动的自举（`eml.bootstrap.Bootstrap`）会自动完成：创建 `plugins/` 等目录；若 `versions/<版本>/<版本>.jar` 缺失则从 `piston-meta.mojang.com` 按版本清单下载**并校验 SHA-1**（库的适用性按清单自身的 `rules` 判定；跳过 LWJGL/natives）；然后带 `-javaagent` 重启自己（父进程继承退出码，避免无终端环境下 JVM 提前退出）。全过程只读写 gameDir。
+
+## 构建
+
+Gradle（wrapper 已随仓库提供，**无需预装 Gradle**）。在仓库根目录执行：
+
+```
+gradlew build
+```
+
+产物：`build/libs/EML-HeadlessBOT-<版本>.jar`
+
+| 任务 | 作用 |
+| --- | --- |
+| `generateOpenJar` | 用 `eml.engine.OpenJarTool` 从官方 jar 生成 `libs/minecraft-<版本>-open.jar`（仅编译期的放宽访问视图，方法体被丢弃，从不执行） |
+| `compileJava` | 依赖上一步；放宽视图作为文件依赖进入 javac classpath |
+| `fatJar` | 自身类 + 运行时库；客户端 jar 永不进入产物 |
+
+**干净 checkout 不需要任何预置文件**：`versions/` 本体缺失时由生成器自行下载，`libs/` 完全由构建产生。首次构建只有 Gradle 发行版和依赖需要联网。
+
+顺序靠任务依赖保证：`Maven` 那套“依赖解析先于生命周期”的限制在 Gradle 里不存在，所以单模块即可完成“先生成、再编译”，不需要拆模块。
+
+依赖优先走国内镜像（阿里云 → 腾讯 → 华为），官方 Maven Central 作回退；`com.mojang:*` 只向 Mojang 官方仓库检索。Gradle 发行版同样从镜像下载（见 `gradle/wrapper/gradle-wrapper.properties`）。
+
+强制重新生成放宽视图：`gradlew generateOpenJar -Popenjar.force=true`
 
 ## 配置：`<gameDir>/bot.yml`
 

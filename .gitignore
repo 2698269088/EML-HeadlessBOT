@@ -1,5 +1,7 @@
 # ---- 构建产物 ----
 target/
+/build/
+/.gradle/
 /debug/
 
 # ---- 运行时数据 ----

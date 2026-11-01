@@ -10,9 +10,9 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * The headless client's answer to the one architectural asymmetry it cannot patch away.
  *
- * <p>Mineflayer never links a renderer, so a renderer null-check can never fire there. This client runs the
- * <em>real</em> vanilla code, so every packet handler that vanilla wrote against a renderer, an audio
- * manager or a GUI is a coupling site. {@code EmlPatches} enumerates the ones a scan could find and the
+ * <p>A client that speaks the protocol without ever linking a renderer can never hit a renderer null-check.
+ * This one runs the <em>real</em> vanilla code, so every packet handler that vanilla wrote against a
+ * renderer, an audio manager or a GUI is a coupling site. {@code EmlPatches} enumerates the ones a scan could find and the
  * TakeItemEntity crash proved the rest: vanilla's {@code handleTakeItemEntity} stored a render state in a
  * local, a {@code StatementDrop} cannot bound a stored value, and the handler died on
  * {@code getEntityRenderDispatcher()} being null - which vanilla turns into a disconnect.
