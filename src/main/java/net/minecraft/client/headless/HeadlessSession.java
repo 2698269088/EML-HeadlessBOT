@@ -1,0 +1,356 @@
+package net.minecraft.client.headless;
+
+import java.io.File;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import eml.action.BotActions;
+import eml.hooks.BotRuntime;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.User;
+import net.minecraft.client.main.GameConfig;
+import net.minecraft.client.multiplayer.ClientHandshakePacketListenerImpl;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.LevelLoadTracker;
+import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.network.Connection;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.network.EventLoopGroupHolder;
+import org.slf4j.Logger;
+
+/**
+ * Owns the headless {@link Minecraft} instance and its thread.
+ *
+ * <p>ASM-route notes: the engine is built with the vanilla {@code GameConfig} constructor (the patched
+ * constructor drops window/GL/sound/GUI, see {@code eml.template.MinecraftLifecycle}), console chat
+ * output arrives through {@link BotRuntime#setSink} rather than a bridge method added to vanilla code,
+ * and the pending login connection is read/written via {@link BotActions} because vanilla keeps that
+ * field private.
+ */
+public final class HeadlessSession {
+   private static final Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
+
+   private final File gameDirectory;
+   private final ConsoleIO io;
+   private final boolean online;
+   private final String username;
+   private final int viewDistance;
+   private final CompletableFuture<Minecraft> clientFuture = new CompletableFuture<>();
+   private volatile Thread clientThread;
+
+   public HeadlessSession(final File gameDirectory, final String username, final boolean online, final int viewDistance, final ConsoleIO io) {
+      this.gameDirectory = gameDirectory;
+      this.username = username;
+      this.online = online;
+      this.viewDistance = viewDistance;
+      this.io = io;
+   }
+
+   public synchronized void start() {
+      if (this.clientThread != null) {
+         return;
+      }
+
+      installDiagnostics();
+      // How to reach the server again after a drop: the reconnect logic lives in the engine hook (it needs
+      // tick timing), but only this class knows how to start a connection.
+      eml.hooks.BotRuntime.setReconnectHandler(() -> this.connect(eml.hooks.BotRuntime.targetHost(), eml.hooks.BotRuntime.targetPort()));
+      this.clientThread = new Thread(this::runClientThread, "Client thread");
+      this.clientThread.start();
+   }
+
+   /**
+    * Makes failures visible. A thread that dies quietly is the reason a headless bot can look "connected but
+    * idle", so every uncaught exception is logged with its stack; the connection traces themselves live in
+    * the patched engine ({@code eml.hooks.BotDebug}) and are switched on by {@code bot.yml}'s debug block.
+    */
+   private void installDiagnostics() {
+      Thread.setDefaultUncaughtExceptionHandler((thread, error) -> LOGGER.error("Uncaught exception on {}", thread.getName(), error));
+      LOGGER.info("debug switches: {}", eml.util.Debug.describe());
+   }
+
+   private void runClientThread() {
+      User user = BotActions.offlineUser(this.username);
+      GameConfig config = BotActions.gameConfig(
+         this.gameDirectory,
+         assetDirectory(),
+         user,
+         net.minecraft.SharedConstants.getCurrentVersion().name(),
+         this.online ? "release" : "offline",
+         !this.online,
+         Proxy.NO_PROXY
+      );
+      Minecraft client = new Minecraft(config);
+
+      // Headless bots do not render: clamp the reported view distance so the server only streams
+      // nearby chunks. The vanilla default decodes hundreds of chunks on the game thread while
+      // moving, which shows up as periodic multi-hundred-ms stalls.
+      client.options.renderDistance().set(this.viewDistance);
+
+      // Chat lines reach the console through the patched ChatListener; cancellation already happened
+      // inside eml.hooks.BotChat before this sink runs.
+      BotRuntime.setSink(line -> this.io.print("[chat/" + line.sender() + "] " + AnsiComponents.render(line.content())));
+
+      this.clientFuture.complete(client);
+
+      try {
+         client.run();
+      } finally {
+         LOGGER.info("Client thread finished.");
+      }
+   }
+
+   /**
+    * The asset directory handed to {@code GameConfig}: always inside the game directory. The vanilla
+    * launcher's own asset cache is deliberately not consulted - its location is a platform assumption, and
+    * this client loads no textures, sounds or models, so an empty directory is enough (and the headless
+    * client is started with an empty resource-pack list anyway).
+    */
+   private File assetDirectory() {
+      String override = System.getProperty("eml.assetsDir");
+      File base = override != null && !override.isBlank() ? new File(override) : this.gameDirectory;
+      return new File(base, "assets");
+   }
+
+   /** Waits until the engine exists; only called from console threads after {@link #start()}. */
+   public Minecraft client() {
+      try {
+         return this.clientFuture.get();
+      } catch (Exception e) {
+         throw new IllegalStateException("Headless client failed to initialise", e);
+      }
+   }
+
+   /** Non-blocking view of the engine: the {@link Minecraft} instance once it exists, otherwise null. */
+   public Minecraft clientNow() {
+      return this.clientFuture.getNow(null);
+   }
+
+   /** The client level, or null when the bot is not in a world. Client thread only. */
+   public net.minecraft.client.multiplayer.ClientLevel currentLevel() {
+      Minecraft client = this.clientNow();
+      return client == null ? null : client.level;
+   }
+
+   public boolean isStarted() {
+      return this.clientThread != null;
+   }
+
+   public String username() {
+      return this.username;
+   }
+
+   /** The working directory the bot runs in (logs, resourcepacks, plugins live here). */
+   public File gameDirectory() {
+      return this.gameDirectory;
+   }
+
+   /** Guard so a status probe and an auto-reconnect retry cannot dial the same server twice at once. */
+   private volatile boolean dialing;
+
+   public void connect(final String host, final int port) {
+      // Persist the target so the next boot can connect automatically (see bot.yml).
+      BotConfig config = BotConfig.instance();
+      if (config != null) {
+         config.updateConnection(this.username, host, port);
+      }
+
+      // Recorded before the probe: a server that fails the ping must still be retried by autoReconnect.
+      eml.hooks.BotRuntime.markConnectionIntent(host, port);
+
+      if (config != null && config.pingBeforeConnect()) {
+         if (this.dialing) {
+            this.io.print(BotLang.get("bot.dial_pending", host, port));
+            return;
+         }
+
+         this.dialing = true;
+         this.io.print(BotLang.get("bot.pinging", host, port));
+         Thread probe = new Thread(() -> {
+            ServerPinger.Result result = ServerPinger.ping(
+               host, port, net.minecraft.SharedConstants.getProtocolVersion(), config.pingTimeoutSeconds() * 1000
+            );
+            this.dialing = false;
+
+            if (result.online()) {
+               this.io.print(BotLang.get("bot.ping_ok", host, port, result.latencyMillis(),
+                  result.onlinePlayers(), result.maxPlayers(), result.version() == null ? "?" : result.version()));
+               this.connectNow(host, port);
+            } else {
+               this.io.printError(BotLang.get("bot.ping_failed", host, port, result.detail()));
+            }
+         }, "Server ping");
+         probe.setDaemon(true);
+         probe.start();
+         return;
+      }
+
+      this.connectNow(host, port);
+   }
+
+   /** The dial itself: queues the work on the client thread, where the connection may be created. */
+   private void connectNow(final String host, final int port) {
+      Minecraft client = this.client();
+      client.execute(() -> {
+         Connection stale = BotActions.pendingConnection(client);
+
+         // A login that failed inside the handshake's future chain leaves pendingConnection set while the
+         // socket is already gone, because the vanilla cleanup never ran. Without this the bot then refuses
+         // every retry with "already connected" and never reconnects.
+         if (client.getConnection() == null && stale != null && !stale.isConnected()) {
+            LOGGER.info("clearing stale pending connection to {}", stale.getRemoteAddress());
+            BotActions.setPendingConnection(client, null);
+            stale.disconnect(Component.literal("stale connection after failed login"));
+         }
+
+         if (client.getConnection() != null || BotActions.pendingConnection(client) != null) {
+            this.io.printError(BotLang.get("bot.already_connected"));
+            return;
+         }
+
+         try {
+            this.io.print(BotLang.get("bot.connecting", host, port));
+            ServerData serverData = new ServerData(host, host + ":" + port, ServerData.Type.OTHER);
+            Connection connection = Connection.connectToServer(new InetSocketAddress(host, port), EventLoopGroupHolder.remote(true), null);
+            connection.initiateServerboundPlayConnection(
+               host,
+               port,
+               new ClientHandshakePacketListenerImpl(
+                  connection,
+                  client,
+                  serverData,
+                  null,
+                  false,
+                  Duration.ZERO,
+                  status -> this.io.print("[login] " + renderStatus(status)),
+                  new LevelLoadTracker(),
+                  null
+               )
+            );
+            connection.send(new net.minecraft.network.protocol.login.ServerboundHelloPacket(client.getUser().getName(), client.getUser().getProfileId()));
+            BotActions.setPendingConnection(client, connection);
+         } catch (Exception e) {
+            this.io.printError(BotLang.get("bot.connect_failed", rootMessage(e)));
+         }
+      });
+   }
+
+   public void disconnect(final String reason) {
+      Minecraft client = this.client();
+      eml.hooks.BotRuntime.markUserDisconnect();
+      client.execute(() -> {
+         ClientPacketListener play = client.getConnection();
+         Connection pending = BotActions.pendingConnection(client);
+         if (play != null) {
+            play.getConnection().disconnect(Component.literal(reason));
+         } else if (pending != null) {
+            pending.disconnect(Component.literal(reason));
+         } else {
+            this.io.printError(BotLang.get("bot.not_connected"));
+         }
+      });
+   }
+
+   public void shutdown() {
+      eml.hooks.BotRuntime.markUserDisconnect();
+      Minecraft client = this.clientFuture.join();
+      if (client != null) {
+         client.stop();
+      }
+   }
+
+   /** Blocks until the client tick loop has finished (i.e. after {@link #shutdown()} or a fatal error). */
+   public void awaitTermination() throws InterruptedException {
+      Thread thread = this.clientThread;
+      if (thread != null) {
+         thread.join();
+      }
+   }
+
+   public void sendChat(final String message) {
+      Minecraft client = this.client();
+      client.execute(() -> {
+         if (client.getConnection() == null) {
+            this.io.printError(BotLang.get("bot.not_connected"));
+            return;
+         }
+
+         // Cancellable, so a plugin can veto or replace console/`say` output before it leaves.
+         if (top.mcocet.hlbot.plugins.BotPlugins.fire(new top.mcocet.hlbot.plugins.events.chat.SendChatEvent(message)).isCancelled()) {
+            return;
+         }
+
+         client.getConnection().sendChat(message);
+      });
+   }
+
+   public void sendCommand(final String command) {
+      Minecraft client = this.client();
+      client.execute(() -> {
+         if (client.getConnection() == null) {
+            this.io.printError(BotLang.get("bot.not_connected"));
+            return;
+         }
+
+         if (top.mcocet.hlbot.plugins.BotPlugins.fire(new top.mcocet.hlbot.plugins.events.chat.SendCommandEvent(command)).isCancelled()) {
+            return;
+         }
+
+         client.getConnection().sendCommand(command);
+      });
+   }
+
+   /**
+    * Applies a new view distance and tells the server, so it streams the matching chunks. Vanilla only
+    * sends the information packet when the option changes through the GUI, which a headless bot never
+    * opens - without the explicit broadcast the server keeps the radius it got at join time.
+    */
+   public void setViewDistance(final int chunks) {
+      Minecraft client = this.client();
+      if (client.isSameThread()) {
+         // Already on the client thread (a plugin command or a tick): apply now, so a restore followed by a
+         // new raise in the same call cannot overtake each other through the task queue.
+         applyViewDistance(client, chunks);
+         return;
+      }
+
+      client.execute(() -> applyViewDistance(client, chunks));
+   }
+
+   private static void applyViewDistance(final Minecraft client, final int chunks) {
+      int clamped = net.minecraft.util.Mth.clamp(chunks, 2, 32);
+      client.options.renderDistance().set(clamped);
+      ClientPacketListener connection = client.getConnection();
+      if (connection != null) {
+         connection.broadcastClientInformation(client.options.buildPlayerInformation());
+      }
+   }
+
+   /** The render distance currently in effect (chunks reported to the server). */
+   public int viewDistance() {
+      Minecraft client = this.clientNow();
+      return client == null ? this.viewDistance : client.options.renderDistance().get();
+   }
+
+   public boolean isConnected() {
+      Minecraft client = this.isStarted() ? this.clientFuture.getNow(null) : null;
+      return client != null && BotActions.isConnected(client);
+   }
+
+   /** The handshake listener reports its progress as a Component (raw type after decompilation). */
+   private static String renderStatus(final Object status) {
+      return status instanceof Component component ? component.getString() : String.valueOf(status);
+   }
+
+   private static String rootMessage(final Throwable t) {
+      Throwable current = t;
+      while (current.getCause() != null && current.getCause() != current) {
+         current = current.getCause();
+      }
+
+      String message = current.getMessage();
+      return current.getClass().getSimpleName() + (message == null ? "" : ": " + message);
+   }
+}

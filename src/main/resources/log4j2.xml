@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HEADLESS BOT logging config.
+
+  com.mojang:logging ships a default log4j2.xml whose appenders include "ServerGuiConsole" (removed with
+  the GUI) and "Tracy" (removed with the profiler bridge); letting log4j pick that file up makes the
+  headless jar spam CLASS_NOT_FOUND errors on every start. This file replaces it with console + rolling
+  file output only, and the shade filter for com.mojang:logging keeps the dependency copy out of the jar.
+-->
+<Configuration status="ERROR" packages="net.minecraft.client.headless">
+    <Appenders>
+        <!-- ANSI colours on the console only: level tag and message are both tinted by severity
+             (INFO white, WARN yellow, ERROR red). The file appender below stays plain text so that
+             logs/latest.log never contains escape sequences. -->
+        <!-- JLineLog: events print above the JLine input line (raw stdout until the
+             terminal is up). charset follows the console (GBK on Chinese Windows, UTF-8 on
+             Linux). Java 18+ would otherwise default to UTF-8 and garble CJK in GBK consoles. -->
+        <JLineLog name="SysOut">
+            <PatternLayout disableAnsi="false" charset="${sys:stdout.encoding:-UTF-8}"
+                pattern="[%d{HH:mm:ss}] [%t/%highlight{%level}{FATAL=red blink, ERROR=red bold, WARN=yellow bold, INFO=white, DEBUG=cyan, TRACE=blue}]: %highlight{%msg{nolookups}}{FATAL=red bold, ERROR=red, WARN=yellow, INFO=white, DEBUG=cyan, TRACE=blue}%n"/>
+        </JLineLog>
+        <!-- The log file is always UTF-8 regardless of the console codepage, and ANSI
+             colour sequences (coloured chat) are stripped so the file stays plain text.
+             Anchored to eml.gameDir (set by EML/Bootstrap before log4j initialises), NOT the process
+             CWD: an IDE run whose working directory differs from the gameDir flag would otherwise write
+             the bot's logs outside its own folder. The "." fallback only covers a hand-made javaagent
+             command that skipped the bootstrap, where CWD is the conventional gameDir. -->
+        <RollingRandomAccessFile name="File" fileName="${sys:eml.gameDir:-.}/logs/latest.log" filePattern="${sys:eml.gameDir:-.}/logs/%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level]: %replace{%msg{nolookups}}{\x1B\[[0-9;]*m}{}%n" charset="UTF-8"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy/>
+                <OnStartupTriggeringPolicy/>
+            </Policies>
+        </RollingRandomAccessFile>
+    </Appenders>
+    <Loggers>
+        <Root level="info">
+            <AppenderRef ref="SysOut"/>
+            <AppenderRef ref="File"/>
+        </Root>
+    </Loggers>
+</Configuration>

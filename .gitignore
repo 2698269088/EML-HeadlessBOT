@@ -1,0 +1,58 @@
+# ---- 构建产物 ----
+target/
+/debug/
+
+# ---- 运行时数据 ----
+/logs/
+/crash-reports/
+/resourcepacks/
+/plugins/
+bot.yml
+
+# ---- IDE ----
+.idea/
+*.iml
+
+# ---- 第三方参考项目（不属于本仓库）----
+/baritone-1.21.4/
+/neoforge/
+/xinbot-master/
+
+# ---- 无头化精简移除的死代码存档 ----
+/_removed_round2/
+/_removed_modules_dead/
+
+# ---- ASM 路线退役的反编译树与原版参考源码（仅本地保留，不分发）----
+/_legacy/
+
+# ---- 本地放置的 Minecraft 本体与反编译工具 jar（含 Mojang 代码，绝不提交）----
+/*.jar
+
+# ---- 下载来的本体与库（含 Mojang 字节码；构建与首次运行都会写入这里）----
+/versions/
+/libraries/
+
+# ---- 本体自己写的运行期数据 ----
+/assets/
+/downloads/
+/debug/
+/options.txt
+/command_history.txt
+/ops.json
+/eula.txt
+/servers.dat
+/servers.dat_old
+/usercache.json
+/quickplay-log.log
+/*.der
+
+# ---- 派生依赖文件：放宽访问的编译期副本 jar、生成器用的 ASM（同样含 Mojang 字节码）----
+/libs/
+
+# ---- 旧反编译源码包与一切压缩包（同样含 Mojang 代码，不分发）----
+/EML-HeadlessBOT-main.zip
+*.zip
+
+# ---- 插件工程：独立仓库，不属于 BOT 本体 ----
+/EMLPga/
+/EML Plus/
