@@ -19,10 +19,15 @@
 
 plugins {
     java
+    // JitPack builds this repository and expects a publishToMavenLocal task to exist; without a
+    // publication it stops with "No build artifacts found" even when compilation succeeded.
+    `maven-publish`
 }
 
-group = "com.mcbot"
-version = "1.0.0-26.1.2"
+// JitPack passes the coordinate it will look for as project properties (-Pgroup / -Pversion). Those have to
+// win over the defaults, otherwise the artifact is published under a name JitPack never reads.
+group = providers.gradleProperty("group").getOrElse("com.mcbot")
+version = providers.gradleProperty("version").getOrElse("1.0.0-26.1.2")
 
 val mcVersion = "26.1.2"
 
@@ -214,4 +219,21 @@ tasks.named<Jar>("jar") {
 
 tasks.named("assemble") {
     dependsOn(fatJar)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Local publication
+//
+// Exists for JitPack, which runs `publishToMavenLocal` and then collects the artifact from the local Maven
+// repository. Only the packaged jar is published: nothing here is meant for Maven Central, and the client
+// jar is not part of the artifact in any case.
+// ---------------------------------------------------------------------------------------------
+
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            artifactId = "EML-HeadlessBOT"
+            artifact(fatJar)
+        }
+    }
 }
