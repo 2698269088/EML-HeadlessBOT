@@ -1,0 +1,10 @@
+# JitPack build configuration.
+#
+# The build declares a Java 25 toolchain (build.gradle.kts -> java { toolchain { ... } }), while JitPack's
+# default image is JDK 17. On JDK 17 Gradle cannot resolve the toolchain and stops with
+# "No matching toolchains found" before compiling anything, so the image has to be told to use 25.
+#
+# JitPack reads this file from the commit the requested tag or version points at: adding it only affects
+# builds of commits that contain it.
+jdk:
+  - openjdk25
