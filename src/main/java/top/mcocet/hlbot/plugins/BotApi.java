@@ -304,6 +304,10 @@ public final class BotApi {
    /**
     * Asks the client to report a larger view distance to the server so long-range pathfinding sees
     * further than the join-time radius. The server may still cap it; chunks stream in as they arrive.
+    *
+    * <p>With {@code viewDistance: auto} (the default) this is an override for the current connection: the
+    * next login adopts the server's radius again. Ask for what the plan needs and re-apply it after a
+    * reconnect if it still matters.
     */
    public void setViewDistance(final int chunks) {
       this.session.setViewDistance(chunks);

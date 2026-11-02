@@ -61,6 +61,9 @@ public final class ClientLoginHandling {
       Holder<DimensionType> dimensionType = spawnInfo.dimensionType();
       self.serverChunkRadius = packet.chunkRadius();
       self.serverSimulationDistance = packet.simulationDistance();
+      // The field above is package-private, so the bot keeps its own copy: `viewDistance: auto` adopts this
+      // radius once the client thread notices the connection (see BotRuntime.connectionEdge).
+      eml.hooks.BotRuntime.noteServerViewDistance(packet.chunkRadius());
       boolean isDebug = spawnInfo.isDebug();
       boolean isFlat = spawnInfo.isFlat();
       int seaLevel = spawnInfo.seaLevel();

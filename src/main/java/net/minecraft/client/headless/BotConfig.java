@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Map;
 import java.util.Objects;
+import eml.bootstrap.JvmSettings;
 import org.slf4j.Logger;
 import org.yaml.snakeyaml.Yaml;
 
@@ -17,6 +18,10 @@ import org.yaml.snakeyaml.Yaml;
  * piece of information gathered that way is written back here, so the next start finds a
  * complete file and connects on its own. Command-line flags always win over the file:
  * {@code --username}/{@code --server}/--{@code port}/{@code --online}/{@code --viewDistance}.
+ *
+ * <p>The {@code jvm:} block is not read for its effect here - it is consumed by the bootstrap, which
+ * launches the JVM this class runs in. It is parsed and written back only so that a {@code save()} on
+ * connect does not wipe the flags the user put there (see {@link JvmSettings}).
  */
 public final class BotConfig {
    private static final Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
@@ -27,7 +32,8 @@ public final class BotConfig {
    private String server = "";
    private int port = 25565;
    private boolean online;
-   private int viewDistance = 4;
+   /** {@code auto} follows the server's radius; a number caps it. See {@link ViewDistance}. */
+   private ViewDistance viewDistance = ViewDistance.AUTO;
    private String language;
    private boolean autoRespawn;
    private boolean autoJump;
@@ -43,6 +49,8 @@ public final class BotConfig {
    private boolean pluginsDisableOnError = true;
    private int pluginsFailThreshold = 1;
    private String resourcePacks = "accept";
+   /** The JVM flags to write back unchanged; see {@link JvmSettings}. */
+   private JvmSettings jvm = JvmSettings.empty();
 
    private BotConfig(final File file) {
       this.file = file;
@@ -59,7 +67,9 @@ public final class BotConfig {
                config.server = stringValue(map.get("server"), "");
                config.port = intValue(map.get("port"), 25565);
                config.online = boolValue(map.get("online"), false);
-               config.viewDistance = intValue(map.get("viewDistance"), 4);
+               // 'auto' follows the server's radius; a number (2..32) caps it. YAML may load either a string
+               // or a number, so the raw value is normalised before parsing.
+               config.viewDistance = ViewDistance.parse(stringValue(map.get("viewDistance"), "auto"));
                config.language = stringValue(map.get("language"), null);
                config.autoRespawn = boolValue(map.get("autoRespawn"), false);
                config.autoJump = boolValue(map.get("autoJump"), false);
@@ -83,6 +93,8 @@ public final class BotConfig {
                }
 
                config.resourcePacks = stringValue(map.get("resourcePacks"), "accept");
+               // Only kept so save() can write it back; the bootstrap already applied it to this JVM.
+               config.jvm = JvmSettings.extract(map);
             }
          } catch (Exception e) {
             LOGGER.warn("Could not parse {}; starting with empty config", file.getName(), e);
@@ -122,7 +134,8 @@ public final class BotConfig {
       return this.online;
    }
 
-   public int viewDistance() {
+   /** How much world to ask for: {@code auto} (follow the server) or a fixed radius. */
+   public ViewDistance viewDistance() {
       return this.viewDistance;
    }
 
@@ -224,7 +237,10 @@ public final class BotConfig {
          + "# online: false (default) plays offline - the username derives a stable UUID and no login runs.\n"
          + "# online: true switches the client to real-account mode (a valid access token is required).\n"
          + "online: " + this.online + "\n"
-         + "viewDistance: " + this.viewDistance + "\n"
+         + "# How much world to ask for: 'auto' (default) follows the server's view distance, which is adopted\n"
+         + "# once the login packet names it; a number 2..32 caps it. A headless client pays for every chunk it\n"
+         + "# keeps, so a server configured for a large view distance is worth capping here.\n"
+         + "viewDistance: " + this.viewDistance.render() + "\n"
          + "language: " + (this.language == null ? "" : this.language) + "\n"
          + "autoRespawn: " + this.autoRespawn + "\n"
          + "# Vanilla auto-jump walks the player up one-block steps on its own. A scripted pathfinder should own\n"
@@ -254,7 +270,15 @@ public final class BotConfig {
          + "  failThreshold: " + this.pluginsFailThreshold + "   # failures before disabling (1 = immediately)\n"
          + "# Resource packs: 'accept' answers ACCEPTED + SUCCESSFULLY_LOADED without downloading anything\n"
          + "# (a headless client never applies pack contents); 'decline' refuses optional packs.\n"
-         + "resourcePacks: " + this.resourcePacks + "\n";
+         + "resourcePacks: " + this.resourcePacks + "\n"
+         + "# JVM flags for the bot process. One flag per line; read by the bootstrap when it starts the JVM,\n"
+         + "# so a change applies on the next start. Appended after the flags the bootstrap needs, and the JVM\n"
+         + "# resolves duplicates last-wins - a line here overrides a default rather than adding to it. With no\n"
+         + "# -Xmx (or -XX:MaxRAMPercentage/MaxRAMFraction) present, 512m is used. -cp/-classpath/-jar/-m are\n"
+         + "# refused (they would replace the runtime classpath the bootstrap assembles).\n"
+         + "# A normal session needs ~170 MB of live heap; raise it for a large viewDistance or heavy plugins.\n"
+         + "jvm:\n"
+         + String.join("\n", this.jvm.renderYaml()) + "\n";
       try {
          Files.writeString(this.file.toPath(), content, StandardCharsets.UTF_8);
       } catch (Exception e) {

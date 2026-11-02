@@ -27,12 +27,16 @@ import eml.util.LaunchLog;
  *       official Mojang endpoints into this directory and SHA-1 verified;</li>
  *   <li>the JVM that actually runs the bot has that runtime plus this agent jar on its classpath and
  *       {@code -javaagent} attached. If the current process does not (typical: {@code java -jar} with
- *       only our jar, or a plain IDE run), a child JVM is started and this one exits with its code.</li>
+ *       only our jar, or a plain IDE run), a child JVM is started and this one exits with its code;</li>
+ *   <li>that child is launched with a bounded heap (512 MB by default) and with whatever the
+ *       {@code jvm:} block of {@code <gameDir>/bot.yml} adds or overrides - see {@link #jvmArguments(File)}
+ *       and {@link JvmSettings}.</li>
  * </ol>
  */
 public final class Bootstrap {
    /** Version of the client this bot targets; {@code -Deml.mcVersion} overrides it. */
    public static final String DEFAULT_VERSION = "26.1.2";
+
    private static final String ENTRY_POINT = "top.mcocet.hlbot.EML";
    private static final String BOOTSTRAPPED = "eml.bootstrapped";
 
@@ -55,7 +59,8 @@ public final class Bootstrap {
       }
 
       if (clientVisible()) {
-         LaunchLog.info("[bootstrap] runtime already on the classpath");
+         LaunchLog.info("[bootstrap] runtime already on the classpath; the " + JvmSettings.KEY
+            + " block of bot.yml is not applied");
          return true;
       }
 
@@ -156,6 +161,47 @@ public final class Bootstrap {
       return new File(gameDirectory, "jfr").getAbsolutePath();
    }
 
+   // ==================== jvm arguments ====================
+
+   /**
+    * JVM flags for the relaunched bot process: the {@code jvm:} block of {@code <gameDir>/bot.yml} (see
+    * {@link JvmSettings}), plus {@link JvmSettings#DEFAULT_MAX_HEAP} when that block does not bound the heap
+    * itself.
+    *
+    * <p>Read here rather than in the child because the flags have to exist before the JVM starts; the file
+    * is the same one the child parses later, so there is exactly one place to edit. Whatever it says is
+    * appended <em>after</em> the flags this class needs ({@code -javaagent}, {@code -Deml.*}, the JFR
+    * repository), and the JVM resolves duplicates last-wins - which is what makes a line there replace a
+    * default rather than only add to it.
+    *
+    * <p>A block that cannot be handed to the JVM is reported and ignored as a whole: half a configuration is
+    * worse than the built-in default, and a bot that refuses to boot over a typo in an optional block is not
+    * useful.
+    */
+   static List<String> jvmArguments(final File gameDirectory) {
+      File botYml = new File(gameDirectory, "bot.yml");
+
+      // The block used to live in a file of its own. Saying so beats silently ignoring a file somebody edited.
+      File legacy = new File(gameDirectory, "jvm.args");
+      if (legacy.isFile()) {
+         LaunchLog.warn("[bootstrap] " + legacy.getName() + " is no longer read; move its lines into the '"
+            + JvmSettings.KEY + ":' block of " + botYml.getName());
+      }
+
+      JvmSettings settings = JvmSettings.load(botYml);
+
+      try {
+         settings.validate();
+      } catch (IllegalArgumentException e) {
+         LaunchLog.error("[bootstrap] ignoring the " + JvmSettings.KEY + " block of " + botYml.getAbsolutePath()
+            + " - " + e.getMessage());
+         LaunchLog.error("[bootstrap] using -Xmx" + JvmSettings.DEFAULT_MAX_HEAP);
+         return JvmSettings.empty().effective();
+      }
+
+      return settings.effective();
+   }
+
    // ==================== relaunch ====================
 
    private static void relaunch(final File agent, final List<File> classpath, final File gameDirectory, final String[] args) {
@@ -171,6 +217,16 @@ public final class Bootstrap {
       // the child's first recording, and it is the child that ever records. An explicit
       // -Deml.jfrRepo / -Djdk.rc.repository.path still wins.
       command.add("-Djdk.rc.repository.path=" + jfrRepository(gameDirectory));
+
+      // Heap and tuning: the jvm: block of bot.yml first, then -Deml.jvmArgs as the one-off override for a
+      // single launch. Both come after the flags above for the same last-wins reason, and the effective list
+      // is logged so "which -Xmx did this run get" never has to be guessed.
+      List<String> tuning = jvmArguments(gameDirectory);
+      LaunchLog.info("[bootstrap] jvm args: " + String.join(" ", tuning));
+
+      for (String argument : tuning) {
+         command.add(argument);
+      }
 
       String extra = System.getProperty("eml.jvmArgs");
       if (extra != null && !extra.isBlank()) {

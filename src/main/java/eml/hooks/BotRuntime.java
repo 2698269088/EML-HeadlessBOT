@@ -60,6 +60,10 @@ public final class BotRuntime {
    private static volatile long lastPingMs = -1L;
    private static long nextPingTick;
 
+   // ---- the radius the server named in its login packet, or -1 before the first login ----
+   // Vanilla stores it inside ClientPacketListener (package-private), so the login donor reports it here.
+   private static volatile int serverViewDistance = -1;
+
    // ---- console output sink ----
    private static final Deque<ReceivedLine> HISTORY = new ArrayDeque<>();
    private static volatile Consumer<ReceivedLine> sink;
@@ -158,6 +162,8 @@ public final class BotRuntime {
          // Every vanilla class the bot needs has been loaded by the time it enters play, so this is the first
          // moment a "loaded before the agent" answer is meaningful. It reports once per process.
          eml.agent.EmlAgent.auditOnce();
+         // Before the plugins are enabled, so onEnable already sees the radius this connection will use.
+         adoptServerViewDistance(client);
          top.mcocet.hlbot.plugins.BotPlugins.onServerConnected();
          String host = "";
          int port = 0;
@@ -176,6 +182,24 @@ public final class BotRuntime {
             lastDropReason == null ? Component.literal("Connection closed") : lastDropReason));
          top.mcocet.hlbot.plugins.BotPlugins.onServerDisconnected();
       }
+   }
+
+   /**
+    * {@code viewDistance: auto} - take the radius the server named in its login packet and make it the
+    * client's own. Vanilla caps the effective distance at the server's value anyway, but only the reported
+    * one decides how much the server streams, so adopting it is what "follow the server" means in practice.
+    * A fixed radius is left exactly as it was applied at startup (or by a plugin).
+    */
+   private static void adoptServerViewDistance(final Minecraft client) {
+      net.minecraft.client.headless.BotConfig config = net.minecraft.client.headless.BotConfig.instance();
+      int server = serverViewDistance;
+
+      if (config == null || !config.viewDistance().auto() || server <= 0) {
+         return;
+      }
+
+      int applied = eml.action.BotActions.applyViewDistance(client, server);
+      log().info("[bot] view distance: auto, following the server ({} chunk(s))", applied);
    }
 
    // ==================== connection keeping ====================
@@ -356,6 +380,16 @@ public final class BotRuntime {
 
    public static long lastPingMs() {
       return lastPingMs;
+   }
+
+   /** Called from the patched {@code ClientPacketListener.handleLogin}: the radius the server allows. */
+   public static void noteServerViewDistance(final int chunks) {
+      serverViewDistance = chunks;
+   }
+
+   /** The server's own view distance from the last login packet, or -1 before the first login. */
+   public static int serverViewDistance() {
+      return serverViewDistance;
    }
 
    public static long tickCount() {

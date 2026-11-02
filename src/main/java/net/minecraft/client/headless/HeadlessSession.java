@@ -36,11 +36,11 @@ public final class HeadlessSession {
    private final ConsoleIO io;
    private final boolean online;
    private final String username;
-   private final int viewDistance;
+   private final ViewDistance viewDistance;
    private final CompletableFuture<Minecraft> clientFuture = new CompletableFuture<>();
    private volatile Thread clientThread;
 
-   public HeadlessSession(final File gameDirectory, final String username, final boolean online, final int viewDistance, final ConsoleIO io) {
+   public HeadlessSession(final File gameDirectory, final String username, final boolean online, final ViewDistance viewDistance, final ConsoleIO io) {
       this.gameDirectory = gameDirectory;
       this.username = username;
       this.online = online;
@@ -72,33 +72,49 @@ public final class HeadlessSession {
    }
 
    private void runClientThread() {
-      User user = BotActions.offlineUser(this.username);
-      GameConfig config = BotActions.gameConfig(
-         this.gameDirectory,
-         assetDirectory(),
-         user,
-         net.minecraft.SharedConstants.getCurrentVersion().name(),
-         this.online ? "release" : "offline",
-         !this.online,
-         Proxy.NO_PROXY
-      );
-      Minecraft client = new Minecraft(config);
-
-      // Headless bots do not render: clamp the reported view distance so the server only streams
-      // nearby chunks. The vanilla default decodes hundreds of chunks on the game thread while
-      // moving, which shows up as periodic multi-hundred-ms stalls.
-      client.options.renderDistance().set(this.viewDistance);
-
-      // Chat lines reach the console through the patched ChatListener; cancellation already happened
-      // inside eml.hooks.BotChat before this sink runs.
-      BotRuntime.setSink(line -> this.io.print("[chat/" + line.sender() + "] " + AnsiComponents.render(line.content())));
-
-      this.clientFuture.complete(client);
-
+      // Anything thrown before clientFuture completes would leave every caller of client() waiting forever -
+      // the console thread would never reach `quit`, and a headless process would just sit there. Completing
+      // the future exceptionally turns that into the startup failure it is (BotApplication exits with code 3).
       try {
-         client.run();
-      } finally {
-         LOGGER.info("Client thread finished.");
+         User user = BotActions.offlineUser(this.username);
+         GameConfig config = BotActions.gameConfig(
+            this.gameDirectory,
+            assetDirectory(),
+            user,
+            net.minecraft.SharedConstants.getCurrentVersion().name(),
+            this.online ? "release" : "offline",
+            !this.online,
+            Proxy.NO_PROXY
+         );
+         Minecraft client = new Minecraft(config);
+
+         // Headless bots do not render, so the reported view distance decides how many chunks the server
+         // streams and decodes on the game thread. In fixed mode it is applied before the first login packet,
+         // so the server starts with the right radius; in auto mode the option is left alone here and the
+         // server's own radius is adopted once the login packet names it (see BotRuntime.connectionEdge).
+         if (this.viewDistance.auto()) {
+            LOGGER.info("View distance: auto, following the server (local option left at {})",
+               client.options.renderDistance().get());
+         } else {
+            int applied = eml.action.BotActions.applyViewDistance(client, this.viewDistance.chunks());
+            LOGGER.info("View distance: fixed at {} chunk(s){}", applied,
+               applied == this.viewDistance.chunks() ? "" : " (requested " + this.viewDistance.chunks() + ")");
+         }
+
+         // Chat lines reach the console through the patched ChatListener; cancellation already happened
+         // inside eml.hooks.BotChat before this sink runs.
+         BotRuntime.setSink(line -> this.io.print("[chat/" + line.sender() + "] " + AnsiComponents.render(line.content())));
+
+         this.clientFuture.complete(client);
+
+         try {
+            client.run();
+         } finally {
+            LOGGER.info("Client thread finished.");
+         }
+      } catch (Throwable failure) {
+         this.clientFuture.completeExceptionally(failure);
+         LOGGER.error("Client thread failed during startup", failure);
       }
    }
 
@@ -303,35 +319,43 @@ public final class HeadlessSession {
    }
 
    /**
-    * Applies a new view distance and tells the server, so it streams the matching chunks. Vanilla only
-    * sends the information packet when the option changes through the GUI, which a headless bot never
-    * opens - without the explicit broadcast the server keeps the radius it got at join time.
+    * Applies a new view distance and tells the server, so it streams the matching chunks (see
+    * {@link eml.action.BotActions#applyViewDistance}). In {@code auto} mode this is an override for the
+    * current connection: the server's radius is adopted again on the next login.
     */
    public void setViewDistance(final int chunks) {
       Minecraft client = this.client();
       if (client.isSameThread()) {
          // Already on the client thread (a plugin command or a tick): apply now, so a restore followed by a
          // new raise in the same call cannot overtake each other through the task queue.
-         applyViewDistance(client, chunks);
+         eml.action.BotActions.applyViewDistance(client, chunks);
          return;
       }
 
-      client.execute(() -> applyViewDistance(client, chunks));
+      client.execute(() -> eml.action.BotActions.applyViewDistance(client, chunks));
    }
 
-   private static void applyViewDistance(final Minecraft client, final int chunks) {
-      int clamped = net.minecraft.util.Mth.clamp(chunks, 2, 32);
-      client.options.renderDistance().set(clamped);
-      ClientPacketListener connection = client.getConnection();
-      if (connection != null) {
-         connection.broadcastClientInformation(client.options.buildPlayerInformation());
-      }
-   }
-
-   /** The render distance currently in effect (chunks reported to the server). */
+   /**
+    * The render distance currently in effect (chunks reported to the server), or {@code -1} before the client
+    * exists - in {@code auto} mode nothing has been requested yet at that point, and a fixed radius has not
+    * been applied either.
+    */
    public int viewDistance() {
       Minecraft client = this.clientNow();
-      return client == null ? this.viewDistance : client.options.renderDistance().get();
+      if (client != null) {
+         return client.options.renderDistance().get();
+      }
+
+      return this.viewDistance.auto() ? -1 : this.viewDistance.chunks();
+   }
+
+   /**
+    * The configured mode for this session: {@code auto} or a fixed radius, as resolved from bot.yml and the
+    * command line. Exposed because {@code bot.yml} alone cannot answer it - a flag overrides the file for
+    * one run, and {@code status} must report what the session actually does.
+    */
+   public ViewDistance viewDistanceMode() {
+      return this.viewDistance;
    }
 
    public boolean isConnected() {

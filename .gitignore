@@ -58,3 +58,12 @@ bot.yml
 # ---- 插件工程：独立仓库，不属于 BOT 本体 ----
 /EMLPga/
 /EML Plus/
+
+# Ignore Gradle project-specific cache directory
+.gradle
+
+# Ignore Gradle build output directory
+build
+
+# Ignore Kotlin plugin data
+.kotlin

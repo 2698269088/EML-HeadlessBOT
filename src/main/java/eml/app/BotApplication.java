@@ -14,6 +14,7 @@ import net.minecraft.client.headless.Console;
 import net.minecraft.client.headless.ConsoleIO;
 import net.minecraft.client.headless.HeadlessSession;
 import net.minecraft.client.headless.LayeredLanguage;
+import net.minecraft.client.headless.ViewDistance;
 import net.minecraft.server.Bootstrap;
 import org.slf4j.Logger;
 import top.mcocet.hlbot.plugins.BotPlugins;
@@ -33,8 +34,8 @@ import top.mcocet.hlbot.plugins.BotPlugins;
  *       start-up and still keeps the console for {@code status}, {@code say}, {@code mine}, ...</li>
  * </ul>
  *
- * <p>Useful flags: {@code --viewDistance N} (chunks reported to the server, default 4; raise it when
- * a plugin needs a larger world view), {@code --online true}, {@code --gameDir path}.
+ * <p>Useful flags: {@code --viewDistance auto|N} (chunks reported to the server; {@code auto}, the default,
+ * follows the server's own view distance, a number caps it), {@code --online true}, {@code --gameDir path}.
  *
  * <p>Persistent config: {@code <gameDir>/bot.yml} stores username/server/port/online/viewDistance.
  * With a complete file the bot skips the questionnaire and connects on its own; with a missing or
@@ -88,7 +89,11 @@ public final class BotApplication {
          config.setUsername(username);
       }
 
-      int viewDistance = Integer.parseInt(args.getOrDefault("viewDistance", String.valueOf(config.viewDistance())));
+      // --viewDistance wins over the file; both accept 'auto' (follow the server) or a chunk count.
+      String requestedViewDistance = args.get("viewDistance");
+      ViewDistance viewDistance = requestedViewDistance == null
+         ? config.viewDistance()
+         : ViewDistance.parse(requestedViewDistance);
       HeadlessSession session = new HeadlessSession(gameDirectory, username, online, viewDistance, io);
       session.start();
 

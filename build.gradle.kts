@@ -135,7 +135,7 @@ dependencies {
 // Generated compile view
 // ---------------------------------------------------------------------------------------------
 
-val generateOpenJar = tasks.register<Exec>("generateOpenJar") {
+val generateOpenJar = tasks.register<JavaExec>("generateOpenJar") {
     group = "build"
     description = "Generates libs/minecraft-$mcVersion-open.jar, the compile-only access-opened client view."
 
@@ -150,23 +150,25 @@ val generateOpenJar = tasks.register<Exec>("generateOpenJar") {
     // The client jar is deliberately NOT an input: the generator downloads it when it is missing, so
     // declaring it here would make the task unrunnable on a clean checkout.
 
-    doFirst {
-        out.parentFile.mkdirs()
-        // Resolved here, not at configuration time, so a cold start does not resolve configurations early.
-        setArgs(
-            listOf(
-                "-classpath", generator.runtimeClasspath.asPath,
-                "eml.engine.OpenJarTool",
-                vanillaJar.asFile.path,
-                out.path,
-                projectDir.path,
-                mcVersion,
-                forceOpenJar
-            )
-        )
-    }
+    // JavaExec rather than Exec: the classpath is a live FileCollection that Gradle resolves when the
+    // task runs (so a cold start still does not resolve configurations at configuration time), while the
+    // command line stays declarative. An Exec task has to build its own argv in a doFirst closure, and
+    // that closure captures the script object, which the configuration cache cannot store - the whole
+    // build then fails at cache-store time with "cannot serialize Gradle script object references".
+    classpath = generator.runtimeClasspath
+    mainClass.set("eml.engine.OpenJarTool")
+    args = listOf(
+        vanillaJar.asFile.path,
+        out.path,
+        projectDir.path,
+        mcVersion,
+        forceOpenJar
+    )
 
-    executable = File(System.getProperty("java.home"), "bin/java").absolutePath
+    doFirst {
+        // Only the declared output's parent; everything else is resolved by JavaExec itself.
+        out.parentFile.mkdirs()
+    }
 }
 
 tasks.named<JavaCompile>("compileJava") {

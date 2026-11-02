@@ -1,13 +1,16 @@
 package eml.action;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.Proxy;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
 import com.mojang.blaze3d.platform.DisplayData;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.OptionInstance;
 import net.minecraft.client.User;
+import net.minecraft.client.headless.ViewDistance;
 import net.minecraft.client.main.GameConfig;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
@@ -35,10 +38,13 @@ import org.jspecify.annotations.Nullable;
 public final class BotActions {
    private static final Field PENDING_CONNECTION;
    private static final Field MISS_TIME;
+   /** {@code OptionInstance.values} - the private value set that carries an integer option's own range. */
+   private static final Field OPTION_VALUES;
 
    static {
       PENDING_CONNECTION = field(Minecraft.class, "pendingConnection");
       MISS_TIME = field(Minecraft.class, "missTime");
+      OPTION_VALUES = field(OptionInstance.class, "values");
    }
 
    private BotActions() {
@@ -151,6 +157,56 @@ public final class BotActions {
       MultiPlayerGameMode gameMode = client.gameMode;
       if (gameMode != null) {
          gameMode.setLocalMode(mode);
+      }
+   }
+
+   /**
+    * Applies a view distance and tells the server, so it streams the matching radius. Vanilla only sends the
+    * information packet when the option changes through the GUI - which a headless bot never opens - so
+    * without the explicit broadcast the server keeps the radius it got at join time.
+    *
+    * <p>Two ceilings apply, and the narrower one is the option's own: {@code Options.renderDistance} is
+    * {@code IntRange(2, demo ? 32 : 16)} in this version, and setting a value outside it does not throw - it
+    * silently keeps the previous one. So the value is clamped to the range the option reports, and read back
+    * afterwards, because "what did this call achieve" has to be answered by the option itself.
+    *
+    * @return the radius actually in effect afterwards
+    */
+   public static int applyViewDistance(final Minecraft client, final int chunks) {
+      int requested = net.minecraft.util.Mth.clamp(chunks, ViewDistance.MIN,
+         Math.min(ViewDistance.MAX, viewDistanceCeiling(client)));
+      client.options.renderDistance().set(requested);
+      int applied = client.options.renderDistance().get();
+
+      if (applied != requested) {
+         eml.hooks.BotRuntime.log().debug("view distance {} is not accepted by this client, in effect {}",
+            requested, applied);
+      }
+
+      ClientPacketListener connection = client.getConnection();
+      if (connection != null) {
+         connection.broadcastClientInformation(client.options.buildPlayerInformation());
+      }
+
+      return applied;
+   }
+
+   /**
+    * The largest radius this client's option accepts (2..16 non-demo, 2..32 in demo mode). Both the field that
+    * holds the option's value set and the range class itself are package-private in vanilla, so the ceiling is
+    * read reflectively - the same trade-off as {@code pendingConnection}: one call per view-distance change,
+    * and a missing member degrades to the protocol ceiling instead of failing at runtime (the caller reads the
+    * option back afterwards, so the applied value stays truthful either way).
+    */
+   private static int viewDistanceCeiling(final Minecraft client) {
+      try {
+         Object values = OPTION_VALUES.get(client.options.renderDistance());
+         Method maxInclusive = values.getClass().getMethod("maxInclusive");
+         maxInclusive.setAccessible(true);
+         Object ceiling = maxInclusive.invoke(values);
+         return ceiling instanceof Integer value ? value : ViewDistance.MAX;
+      } catch (ReflectiveOperationException | RuntimeException ignored) {
+         return ViewDistance.MAX;
       }
    }
 

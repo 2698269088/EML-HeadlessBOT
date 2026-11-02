@@ -222,6 +222,13 @@ public final class Commands {
 
          lines.add("level      : " + (client.level == null ? "none" : client.level.dimension().identifier()));
 
+         // The session knows the mode that actually applies (a command-line flag overrides bot.yml for one
+         // run), and the reported value is what the client last told the server.
+         int serverViewDistance = eml.hooks.BotRuntime.serverViewDistance();
+         lines.add("view dist  : " + session.viewDistanceMode().describe() + " (reported "
+            + client.options.renderDistance().get()
+            + ", server " + (serverViewDistance <= 0 ? "n/a" : String.valueOf(serverViewDistance)) + ")");
+
          if (client.player != null) {
             lines.add(String.format(
                java.util.Locale.ROOT,
