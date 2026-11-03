@@ -79,7 +79,7 @@ public final class EmlPgaPlugin extends Plugin {
       }
 
       // A built-in feature has no plugin.yml, so there is no description to read the version from.
-      this.log().info(this.lang.get("plugin.enabled", "1.0.0", this.lang.language()));
+      this.log().info(this.lang.get("plugin.enabled", "1.1.0", this.lang.language()));
    }
 
    @Override

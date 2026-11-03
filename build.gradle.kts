@@ -27,7 +27,7 @@ plugins {
 // JitPack passes the coordinate it will look for as project properties (-Pgroup / -Pversion). Those have to
 // win over the defaults, otherwise the artifact is published under a name JitPack never reads.
 group = providers.gradleProperty("group").getOrElse("com.mcbot")
-version = providers.gradleProperty("version").getOrElse("1.0.0-26.1.2")
+version = providers.gradleProperty("version").getOrElse("1.1.0-26.1.2")
 
 val mcVersion = "26.1.2"
 
