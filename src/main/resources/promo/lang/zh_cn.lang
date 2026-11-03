@@ -1,0 +1,149 @@
+# EMLPga - 简体中文
+# 格式：key=value；{0} {1} 按参数顺序替换。缺失的键会回退到英文，仍缺失则显示键名本身。
+
+# ---------- 插件 ----------
+plugin.enabled=EMLPga {0} 已启用（语言 {1}）。/promo help 查看指令
+plugin.idle=EMLPga 已加载，但 enabled=false，不会自动开始广播
+
+# ---------- 广播主循环 ----------
+campaign.started=广告广播已开始（模式 {0}）
+campaign.stopped=广告广播已停止
+campaign.offline=未连接服务器，暂时等待
+campaign.no.messages=消息列表为空，请用 add <文本> 添加
+campaign.no.targets=没有可私聊的目标玩家，本轮跳过
+
+# ---------- 高速公开广播 ----------
+burst.already=高速广播已在运行
+burst.needs.private=高速广播只在私聊模式下可用，请先 mode private
+burst.needs.running=请先 start 启动主广播，再开启高速广播
+burst.started=高速广播已开始：每 {0} 秒一条，持续 {1} 秒
+burst.stopped=高速广播已停止
+
+# ---------- 问候 ----------
+greeting.sent=已向 {0} 发送问候
+
+# ---------- 状态 ----------
+status.header=—— EMLPga 状态（{0}）——
+status.campaign=广播: {0}
+status.mode=模式: {0}
+status.interval=间隔: 轮次 {0} 秒，条间 {1} 秒，抖动 ±{2} 秒
+status.round=本轮进度: {0}，目标 {1}，下一条 {2} 秒后
+status.waiting=等待下一轮: {0} 秒后
+status.note=备注: {0}
+status.roster=在线 {0} 人，可私聊 {1} 人，黑名单 {2} 人
+status.burst=高速广播: {0}（每 {1} 秒，持续 {2} 秒）
+status.messages=消息数: 主列表 {0} 条，高速列表 {1} 条
+status.text=随机后缀 {0}，数学字体 {1}，入服问候 {2}
+status.running=运行中
+status.stopped=已停止
+status.paused=等待下一窗口
+status.on=开
+status.off=关
+
+# ---------- 命令通用 ----------
+cmd.description=广告广播控制
+cmd.needs.epa=未知的子命令入口 '{0}'，正确写法是 /promo <subcommand>
+cmd.unknown=未知子命令: {0}
+cmd.help.title=用法: /promo <subcommand> [参数]
+cmd.usage=用法: {0}
+cmd.number.range=数值必须大于等于 {0}
+cmd.number.invalid=不是有效数字: {0}
+cmd.toggle.invalid=只接受 on/off（也接受 true/false、enable/disable）：{0}
+
+# ---------- 生命周期 ----------
+cmd.start.ok=已启动
+cmd.stop.ok=已停止
+cmd.forcestop.ok=已强制停止，并把 enabled 置为 false
+cmd.reload.ok=已重载配置（语言 {0}，{1} 个词条）
+
+# ---------- 消息列表 ----------
+cmd.list.empty=消息列表为空
+cmd.list.header=共 {0} 条消息:
+cmd.list.duplicate=已存在相同消息: {0}
+cmd.list.added=已添加第 {0} 条: {1}
+cmd.list.removed=已删除: {0}
+cmd.list.index=序号超出范围，当前共 {0} 条
+cmd.list.missing=找不到: {0}
+cmd.list.updated=第 {0} 条已改为: {1}
+cmd.list.cleared=消息列表已清空
+
+# ---------- 调度 ----------
+cmd.mode.ok=发送模式已设为 {0}
+cmd.interval.ok={0} 模式的轮次间隔已设为 {1} 秒
+cmd.gap.ok=条间隔已设为 {0} 秒
+cmd.jitter.ok=抖动已设为 ±{0} 秒
+cmd.random.ok=每轮随机一条: {0}
+cmd.generic.ok={0} = {1}
+
+# ---------- 问候 ----------
+cmd.greeting.ok=入服问候: {0}
+cmd.greeting.format.ok=问候格式已设为: {0}
+
+# ---------- 手动发送 ----------
+cmd.offline=未连接服务器，无法发送
+cmd.say.ok=已发送: {0}
+cmd.pm.ok=已私聊发送给 {0}
+
+# ---------- 玩家 ----------
+cmd.players.empty=没有其他在线玩家
+cmd.players.header=在线 {0} 人，可私聊 {1} 人:
+
+# ---------- 黑名单 ----------
+cmd.blacklist.empty=黑名单为空
+cmd.blacklist.header=黑名单: {0}
+cmd.blacklist.added=已加入黑名单: {0}
+cmd.blacklist.removed=已移出黑名单: {0}
+cmd.blacklist.present=已在黑名单中: {0}
+cmd.blacklist.missing=不在黑名单中: {0}
+
+# ---------- 高速广播命令 ----------
+cmd.burst.started=高速广播已开启
+cmd.burst.refused=高速广播未能开启，请查看上方日志
+cmd.burst.stopped=高速广播已关闭
+cmd.burstlist.header=高速广播消息共 {0} 条:
+cmd.burstlist.added=已添加第 {0} 条高速消息: {1}
+
+# ---------- 诊断 ----------
+cmd.lang.ok=语言 {0}，共 {1} 个词条
+
+# ---------- 子命令说明（help 自动生成） ----------
+summary.help=显示全部子命令
+summary.status=当前状态、进度与开关
+summary.start=开始按计划广播
+summary.stop=停止广播
+summary.forcestop=强制停止并关闭自动启动
+summary.reload=重读 config.yml 并重启广播
+summary.list=列出消息
+summary.add=追加一条消息
+summary.remove=按序号或原文删除消息
+summary.set=修改指定序号的消息
+summary.clear=清空消息列表
+summary.mode=切换 public/private 发送模式
+summary.interval=当前模式的轮次间隔（秒）
+summary.publicinterval=公开模式的轮次间隔（秒）
+summary.privateinterval=私聊模式的轮次间隔（秒）
+summary.gap=同轮两条消息之间的间隔（秒）
+summary.jitter=轮次间隔的随机偏移（±秒）
+summary.gapjitter=条间隔的随机偏移（±秒）
+summary.random=每轮只随机发一条
+summary.skiprepeats=跳过与上一条相同的内容
+summary.suffix=是否追加随机后缀
+summary.suffixlen=随机后缀长度
+summary.mathfont=把长数字替换为数学粗体
+summary.mathmin=触发替换的最少连续位数
+summary.greeting=玩家进服时是否问候
+summary.greetingformat=问候格式，支持 #name# #bot# #players#
+summary.say=立即公开发送指定序号的消息
+summary.pm=立即私聊发送给指定玩家
+summary.players=列出在线与可私聊玩家
+summary.blacklist=私聊黑名单管理
+summary.burst=高速公开广播开关与状态
+summary.burstlist=列出高速广播消息
+summary.burstadd=追加一条高速广播消息
+summary.burstremove=按序号或原文删除高速消息
+summary.burstset=修改指定序号的高速消息
+summary.sync=高速列表是否跟随主列表
+summary.burstinterval=高速广播的发送间隔（秒）
+summary.burstduration=高速广播每个窗口的持续秒数
+summary.lang=显示当前语言与词条数
+

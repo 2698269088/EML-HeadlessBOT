@@ -1,0 +1,121 @@
+# AutoLogin - rule-driven login for the headless bot.
+#
+# The server password comes from bot.yml's `password` field and is exposed to rules as {{password}}.
+# Leave `credentials.password` blank to use that shared value for every server.
+#
+# A rule is: when <signal> matches <condition>, run <actions> in order.
+# Built-in templates cover the common flows; list them with `autologin templates`.
+
+enabled: true
+# Print signals, matched rules and executed actions; `autologin debug on` toggles this at runtime.
+debug: false
+
+credentials:
+  password: ""     # blank = use bot.yml `password`
+  email: ""
+
+variables: {}
+
+# Select built-in templates: authme, register-then-login, join-login-fallback.
+templates:
+  - authme
+
+# Custom rules are merged with the templates and evaluated by ascending priority.
+#
+# Condition keys (all optional, combined with AND unless nested):
+#   types        = [SYSTEM_CHAT, PUBLIC_CHAT, OVERLAY, TITLE, SERVER_CHANGE, DISCONNECT, WINDOW_OPEN, WINDOW_SLOT]
+#   contains     = ["Please log in", "/login"]
+#   notContains  = ["logged in"]
+#   equals       = "GAME"
+#   startsWith   = "..."
+#   regex        = "(?i)position[: ]+(\\d+).*queue"   # capture groups -> {{g1}}, {{g2}}, ...
+#   stage        = [LOGGED_IN]
+#   notStage     = [LOGGED_IN]
+#   sender       = "SomePlayer"
+#   overlay      = true
+#   ignoreCase   = true
+#   all / any / not = { ... }                         # nested combinators
+#
+# Rule modifiers: priority (lower runs first), once, cooldownMs, stopOnMatch.
+# Actions (strings support {{variable}} interpolation):
+#   command        = "login {{password}}"
+#   chat           = "hello"
+#   stage          = "LOGGED_IN"
+#   setVariable    = { key = "value" }
+#   log            = "text"
+#   selectSlot     = 0
+#   useItem        = "MAIN_HAND"
+#   closeContainer = 0
+#   containerButton = { containerId = 0, button = 1 }
+#   containerClick  = { slot = 11, button = 0 }
+rules: []
+
+# Optional per-server login flows. The key is an exact host (any port) or host:port;
+# matching is case-insensitive and the first matching entry wins.
+# A matched entry replaces the top-level templates/rules; variables, enabled and debug
+# inherit from the top level unless explicitly set. All servers share the password above,
+# which in turn falls back to bot.yml's password.
+servers:
+  # XinMetaPlugin-compatible login flow for 2b2t.xin. Authentication prompts arrive as titles.
+  "2b2t.xin":
+    templates: []
+    rules:
+      - id: 2b2t-xin-login-success
+        priority: 5
+        once: true
+        when:
+          types: [TITLE]
+          contains: ["登陆成功"]
+        actions:
+          - stage: LOGGED_IN
+          - log: "2b2t.xin login successful; using the join item"
+          - selectSlot: 2
+          - useItem: MAIN_HAND
+      - id: 2b2t-xin-register
+        priority: 10
+        once: true
+        notStage: [LOGGED_IN, JOIN_MENU, JOINING]
+        when:
+          types: [TITLE]
+          contains: ["注册"]
+          notContains: ["登陆"]
+        actions:
+          - command: "reg {{password}} {{password}}"
+      - id: 2b2t-xin-login
+        priority: 20
+        cooldownMs: 2000
+        notStage: [LOGGED_IN, JOIN_MENU, JOINING]
+        when:
+          types: [TITLE]
+          contains: ["登陆"]
+          notContains: ["登陆成功"]
+        actions:
+          - command: "l {{password}}"
+      - id: 2b2t-xin-join-menu
+        priority: 30
+        when:
+          types: [WINDOW_OPEN]
+          stage: [LOGGED_IN]
+          any:
+            - contains: ["Game"]
+            - contains: ["戏"]
+            - contains: ["队"]
+            - contains: ["入"]
+        actions:
+          - stage: JOIN_MENU
+          - log: "2b2t.xin join menu opened: {{text}}"
+      - id: 2b2t-xin-join-click
+        priority: 40
+        once: true
+        when:
+          types: [WINDOW_SLOT]
+          stage: [JOIN_MENU]
+          any:
+            - contains: ["Game"]
+            - contains: ["戏"]
+            - contains: ["队"]
+            - contains: ["入"]
+        actions:
+          - containerClick: { slot: "{{slot}}", button: 0 }
+          - stage: JOINING
+          - log: "2b2t.xin clicked join item in slot {{slot}}"

@@ -28,7 +28,8 @@ import eml.util.LaunchLog;
  *   <li>the JVM that actually runs the bot has that runtime plus this agent jar on its classpath and
  *       {@code -javaagent} attached. If the current process does not (typical: {@code java -jar} with
  *       only our jar, or a plain IDE run), a child JVM is started and this one exits with its code;</li>
- *   <li>that child is launched with a bounded heap (512 MB by default) and with whatever the
+ *   <li>that child is launched with the footprint-tuned defaults ({@code -Xmx384m} and 8-byte object
+ *       headers - see {@link JvmSettings#defaults()}) and with whatever the
  *       {@code jvm:} block of {@code <gameDir>/bot.yml} adds or overrides - see {@link #jvmArguments(File)}
  *       and {@link JvmSettings}.</li>
  * </ol>
@@ -195,7 +196,7 @@ public final class Bootstrap {
       } catch (IllegalArgumentException e) {
          LaunchLog.error("[bootstrap] ignoring the " + JvmSettings.KEY + " block of " + botYml.getAbsolutePath()
             + " - " + e.getMessage());
-         LaunchLog.error("[bootstrap] using -Xmx" + JvmSettings.DEFAULT_MAX_HEAP);
+         LaunchLog.error("[bootstrap] using the built-in defaults: " + String.join(" ", JvmSettings.defaults()));
          return JvmSettings.empty().effective();
       }
 

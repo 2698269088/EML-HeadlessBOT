@@ -18,6 +18,7 @@ import eml.action.BotInventory;
 import eml.action.BotPlayer;
 import eml.action.BotWorld;
 import top.mcocet.hlbot.plugins.event.Listener;
+import top.mcocet.hlbot.nav.BotNavigation;
 
 /**
  * The facade through which plugins interact with the bot. One instance is shared by all
@@ -36,6 +37,7 @@ public final class BotApi {
    private final BotWorld world;
    private final BotControls controls;
    private final BotInventory inventory;
+   private final BotNavigation navigation = new BotNavigation();
    private PluginManager pluginManager;
 
    BotApi(final HeadlessSession session, final ConsoleIO console) {
@@ -44,6 +46,14 @@ public final class BotApi {
       this.world = new BotWorld(session::currentLevel);
       this.controls = new BotControls(session::clientNow);
       this.inventory = new BotInventory(session::clientNow);
+   }
+
+   /**
+    * Built-in trips: walking (with swimming, climbing and digging), elytra travel and vehicle riding. Every
+    * call only queues a request, so it is safe from any thread; a new trip replaces the one in progress.
+    */
+   public BotNavigation navigation() {
+      return this.navigation;
    }
 
    /** Wiring done by {@link BotPlugins#init}; never call this from a plugin. */

@@ -47,6 +47,42 @@ public final class Commands {
       }
    }
 
+   /**
+    * Registers a command written against the plugin-facing {@code top.mcocet.hlbot.plugins.BotCommand}: the
+    * same name/usage/description shape plugins use, but without a plugin owning it, for commands that are
+    * part of the bot itself. A throw inside {@code execute} becomes a console error instead of reaching the
+    * tick loop.
+    */
+   public static void register(final top.mcocet.hlbot.plugins.BotCommand command) {
+      register(new Command() {
+         @Override
+         public String name() {
+            return command.name();
+         }
+
+         @Override
+         public String usage() {
+            return command.usage();
+         }
+
+         @Override
+         public String description() {
+            // A description that is a .lang key gets localised; a literal (which is what plugin commands
+            // usually pass) is returned unchanged, because BotLang falls back to the key itself.
+            return BotLang.get(command.description());
+         }
+
+         @Override
+         public void execute(final ConsoleIO io, final HeadlessSession session, final List<String> args) {
+            try {
+               command.execute(args);
+            } catch (RuntimeException e) {
+               io.printError(BotLang.get("bot.command_failed", e));
+            }
+         }
+      });
+   }
+
    /** Removes a command previously added with {@link #register}; used when a plugin disables. */
    public static void unregister(final String name) {
       synchronized (REGISTRY) {
@@ -115,8 +151,17 @@ public final class Commands {
       synchronized (REGISTRY) {
          snapshot = new ArrayList<>(REGISTRY.values());
       }
+
+      // A command may be registered under several names - quit/end/stop are one behaviour - and the list names
+      // each behaviour once instead of repeating the same line for every spelling.
+      java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+
       for (Command command : snapshot) {
-         lines.add(String.format("  %-22s %s", command.usage(), command.description()));
+         String line = String.format("  %-22s %s", command.usage(), command.description());
+
+         if (seen.add(line)) {
+            lines.add(line);
+         }
       }
 
       return lines;
@@ -131,6 +176,12 @@ public final class Commands {
       register(new Say());
       register(new ServerCommand());
       register(new Slot());
+      register(new Jump());
+      register(new Sprint());
+      register(new Sneak());
+      register(new Position("pos"));
+      register(new Position("coords"));
+      register(new Position("position"));
       register(new Swing());
       register(new Drop());
       register(new Attack());
@@ -141,7 +192,10 @@ public final class Commands {
       register(new Msgs());
       register(new Jfr());
       register(new PluginList());
-      register(new Quit());
+      // One action, three spellings. 'goto stop' stays the navigator's; these three exit the bot.
+      register(new Quit("quit"));
+      register(new Quit("end"));
+      register(new Quit("stop"));
    }
 
    /** Runs the action on the client thread and reports completion or failure to the console. */
@@ -402,6 +456,171 @@ public final class Commands {
          onClient(session, io, "slot", () -> {
             eml.action.BotActions.selectSlot(session.client(), slot);
             io.print(BotLang.get("cmd.slot.selected", slot));
+         });
+      }
+   }
+
+   private static class Jump implements Command {
+      @Override
+      public String name() {
+         return "jump";
+      }
+
+      @Override
+      public String usage() {
+         return "jump";
+      }
+
+      @Override
+      public String description() {
+         return BotLang.get("cmd.jump.desc");
+      }
+
+      @Override
+      public void execute(final ConsoleIO io, final HeadlessSession session, final List<String> args) {
+         if (!args.isEmpty()) {
+            io.printError(BotLang.get("bot.usage", this.usage()));
+            return;
+         }
+
+         onClient(session, io, this.name(), () -> {
+            if (session.client().player == null) {
+               io.printError(BotLang.get("bot.not_connected"));
+               return;
+            }
+
+            eml.action.BotControls controls = new eml.action.BotControls(session::clientNow);
+            controls.setJump(true);
+            top.mcocet.hlbot.plugins.BotScheduler.INSTANCE.runLater(null, () -> controls.setJump(false), 1);
+            io.print(BotLang.get("cmd.jump.result"));
+         });
+      }
+   }
+
+   private abstract static class KeyToggle implements Command {
+      private final String name;
+      private final String descriptionKey;
+      private final String resultKey;
+
+      KeyToggle(final String name, final String descriptionKey, final String resultKey) {
+         this.name = name;
+         this.descriptionKey = descriptionKey;
+         this.resultKey = resultKey;
+      }
+
+      @Override
+      public String name() {
+         return this.name;
+      }
+
+      @Override
+      public String usage() {
+         return this.name + " [on|off]";
+      }
+
+      @Override
+      public String description() {
+         return BotLang.get(this.descriptionKey);
+      }
+
+      @Override
+      public void execute(final ConsoleIO io, final HeadlessSession session, final List<String> args) {
+         Boolean enabled;
+         if (args.isEmpty()) {
+            enabled = true;
+         } else if (args.size() == 1 && "on".equalsIgnoreCase(args.get(0))) {
+            enabled = true;
+         } else if (args.size() == 1 && "off".equalsIgnoreCase(args.get(0))) {
+            enabled = false;
+         } else {
+            enabled = null;
+         }
+
+         if (enabled == null) {
+            io.printError(BotLang.get("bot.usage", this.usage()));
+            return;
+         }
+
+         boolean down = enabled;
+         onClient(session, io, this.name(), () -> {
+            if (session.client().player == null) {
+               io.printError(BotLang.get("bot.not_connected"));
+               return;
+            }
+
+            this.setKey(new eml.action.BotControls(session::clientNow), down);
+            io.print(BotLang.get(this.resultKey, down));
+         });
+      }
+
+      abstract void setKey(eml.action.BotControls controls, boolean down);
+   }
+
+   private static final class Sprint extends KeyToggle {
+      Sprint() {
+         super("sprint", "cmd.sprint.desc", "cmd.sprint.result");
+      }
+
+      @Override
+      void setKey(final eml.action.BotControls controls, final boolean down) {
+         controls.setSprint(down);
+      }
+   }
+
+   private static final class Sneak extends KeyToggle {
+      Sneak() {
+         super("sneak", "cmd.sneak.desc", "cmd.sneak.result");
+      }
+
+      @Override
+      void setKey(final eml.action.BotControls controls, final boolean down) {
+         controls.setSneak(down);
+      }
+   }
+
+   private static class Position implements Command {
+      private final String name;
+
+      Position(final String name) {
+         this.name = name;
+      }
+
+      @Override
+      public String name() {
+         return this.name;
+      }
+
+      @Override
+      public String usage() {
+         return "pos | coords | position";
+      }
+
+      @Override
+      public String description() {
+         return BotLang.get("cmd.pos.desc");
+      }
+
+      @Override
+      public void execute(final ConsoleIO io, final HeadlessSession session, final List<String> args) {
+         if (!args.isEmpty()) {
+            io.printError(BotLang.get("bot.usage", this.usage()));
+            return;
+         }
+
+         onClient(session, io, this.name(), () -> {
+            Minecraft client = session.client();
+            if (client.player == null) {
+               io.printError(BotLang.get("bot.not_connected"));
+               return;
+            }
+
+            io.print(BotLang.get("cmd.pos.result",
+               String.format(java.util.Locale.ROOT, "%.2f", client.player.getX()),
+               String.format(java.util.Locale.ROOT, "%.2f", client.player.getY()),
+               String.format(java.util.Locale.ROOT, "%.2f", client.player.getZ()),
+               client.level == null ? "?" : String.valueOf(client.level.dimension().identifier()),
+               String.format(java.util.Locale.ROOT, "%.1f", client.player.getYRot()),
+               String.format(java.util.Locale.ROOT, "%.1f", client.player.getXRot())));
          });
       }
    }
@@ -969,15 +1188,26 @@ public final class Commands {
       }
    }
 
+   /**
+    * Ends the session. Registered three times - {@code quit}, {@code end} and {@code stop} - because that is
+    * how people type it. Navigation keeps its own {@code goto stop}, so a bare {@code stop} only ever means
+    * "exit the bot".
+    */
    private static class Quit implements Command {
+      private final String name;
+
+      private Quit(final String name) {
+         this.name = name;
+      }
+
       @Override
       public String name() {
-         return "quit";
+         return this.name;
       }
 
       @Override
       public String usage() {
-         return "quit";
+         return "quit | end | stop";
       }
 
       @Override

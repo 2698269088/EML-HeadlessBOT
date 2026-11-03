@@ -31,6 +31,8 @@ public final class BotConfig {
    private String username;
    private String server = "";
    private int port = 25565;
+   /** Server password for the built-in AutoLogin feature; blank when the server needs none. */
+   private String password = "";
    private boolean online;
    /** {@code auto} follows the server's radius; a number caps it. See {@link ViewDistance}. */
    private ViewDistance viewDistance = ViewDistance.AUTO;
@@ -66,6 +68,7 @@ public final class BotConfig {
                config.username = stringValue(map.get("username"), null);
                config.server = stringValue(map.get("server"), "");
                config.port = intValue(map.get("port"), 25565);
+               config.password = stringValue(map.get("password"), "");
                config.online = boolValue(map.get("online"), false);
                // 'auto' follows the server's radius; a number (2..32) caps it. YAML may load either a string
                // or a number, so the raw value is normalised before parsing.
@@ -128,6 +131,11 @@ public final class BotConfig {
 
    public int port() {
       return this.port;
+   }
+
+   /** Server password read from {@code bot.yml}; used by AutoLogin as the {@code {{password}}} variable. */
+   public String password() {
+      return this.password;
    }
 
    public boolean online() {
@@ -234,6 +242,9 @@ public final class BotConfig {
          + "username: " + (this.username == null ? "" : this.username) + "\n"
          + "server: " + this.server + "\n"
          + "port: " + this.port + "\n"
+         + "# Server password for the AutoLogin feature (plain text; leave blank when none is needed).\n"
+         + "# It is exposed to autologin.yml rules as {{password}}.\n"
+         + "password: " + this.password + "\n"
          + "# online: false (default) plays offline - the username derives a stable UUID and no login runs.\n"
          + "# online: true switches the client to real-account mode (a valid access token is required).\n"
          + "online: " + this.online + "\n"
@@ -274,9 +285,12 @@ public final class BotConfig {
          + "# JVM flags for the bot process. One flag per line; read by the bootstrap when it starts the JVM,\n"
          + "# so a change applies on the next start. Appended after the flags the bootstrap needs, and the JVM\n"
          + "# resolves duplicates last-wins - a line here overrides a default rather than adding to it. With no\n"
-         + "# -Xmx (or -XX:MaxRAMPercentage/MaxRAMFraction) present, 512m is used. -cp/-classpath/-jar/-m are\n"
+         + "# -Xmx (or -XX:MaxRAMPercentage/MaxRAMFraction) present, 384m is used. -cp/-classpath/-jar/-m are\n"
          + "# refused (they would replace the runtime classpath the bootstrap assembles).\n"
-         + "# A normal session needs ~170 MB of live heap; raise it for a large viewDistance or heavy plugins.\n"
+         + "# The two lines below are the footprint-tuned default: 384m of heap (a session holds ~86 MB of\n"
+         + "# live heap idle and ~170 MB with a world) plus 8-byte object headers, which measured ~44 MB less\n"
+         + "# RSS than the old 512m block. No collector is named - G1 is the better one at this heap size.\n"
+         + "# Raise the heap for a large viewDistance or heavy plugins; drop it to 256m if you cap viewDistance.\n"
          + "jvm:\n"
          + String.join("\n", this.jvm.renderYaml()) + "\n";
       try {

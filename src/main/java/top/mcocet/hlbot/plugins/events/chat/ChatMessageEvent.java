@@ -28,7 +28,7 @@ public class ChatMessageEvent extends Event implements Cancellable {
       return this.fromServer;
    }
 
-   /** {@code "server"} or {@code "player"} — matches the console prefix. */
+   /** {@code "server"}, {@code "player"}, {@code "overlay"} or {@code "title"} — matches the console prefix. */
    public String getSender() {
       return this.sender;
    }
