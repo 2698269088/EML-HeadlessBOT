@@ -483,20 +483,6 @@ gradlew build
 
 强制重新生成放宽视图：`gradlew generateOpenJar -Popenjar.force=true`
 
-## 更新日志
-
-### 1.1.0
-
-- 新增内置**推广播报**（`promo`，移植自 EMLPga）：公屏/私聊两种模式、抖动间隔、随机后缀与数学粗体、进服欢迎、burst 高频窗口、黑名单、完整的运行时子命令表。
-- 新增内置**珍珠按钮动作**（`sp`）：按方块状态识别按钮朝向、按可达与视线挑选站位、以 pressed 状态确认点击、可选停靠点回走。
-- 新增 `viewDistance: auto|<n>` 视距策略与 `status` 中的视距/资源包/韧性统计。
-- 新增 `bot.yml` 的 `autoJump`、`pingBeforeConnect`/`pingTimeoutSeconds`、`plugins` 故障策略、`resourcePacks` 与 `jvm:` 块（原 `jvm.args` 废弃）。
-- 新增插件 `ContainerSlotUpdatedEvent`、`BotInventory` 容器/配方 API、`BotApi` 的监控与视距方法、`BotControls` 的按钮/视线/瞄准 API。
-
-### 1.0.0
-
-首个对外版本：无头客户端本体、字节码补丁路线、AutoLogin、`goto` 寻路、插件系统与插件 API。
-
 ## 许可
 
 见 [LICENSE](LICENSE)。
