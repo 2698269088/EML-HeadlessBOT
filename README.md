@@ -1,6 +1,6 @@
 # EML-HeadlessBOT
 
-无头（headless）Minecraft 26.1.2 机器人客户端 —— **v1.1.0**
+无头（headless）Minecraft 26.1.2 机器人客户端
 
 一个没有窗口、不加载渲染/声音/字体系统的完整协议客户端：能登录服务器、进世界、收发聊天与命令、攻击/挖掘/丢弃物品、维护真实方块实体与容器状态，并内置自动登录、自动寻路、推广播报与珍珠按钮动作。
 
@@ -12,21 +12,7 @@
 - 运行期加载的是**未经修改的官方 jar**；私有成员之所以合法，是因为 donor 方法体被内联进目标类自身（成为其 nestmate），而不是因为访问标志真的被改过；
 - 补丁由 `-javaagent` 在类加载时施加，`eml.template` 下的 Java 方法就是补丁内容——它们经过 javac 类型检查，不是手写指令。
 
-内存占用（JFR 实测）：空闲约 **86 MB** 活堆、进世界后约 **170 MB**；默认 `-Xmx384m` + 8 字节对象头时 RSS 约 **340 MB**。`botinfo` 的 `used` 会更高，因为大堆 + 无内存压力时 G1 不主动回收垃圾，所以要用它的 `live heap` 行比较，而不是 `used`。
-
-## 快速开始
-
-**环境要求**：JDK 25（构建与运行都需要；`build.gradle.kts` 声明 Java 25 toolchain）、可访问 Mojang 与 Maven Central 的网络。Gradle wrapper 已随仓库提供，**无需预装 Gradle**。
-
-```bash
-# 构建
-gradlew build
-
-# 运行（首次会自举：建目录、下载本体、带 -javaagent 重启自己）
-java -jar build/libs/EML-HeadlessBOT-1.1.0-26.1.2.jar
-```
-
-首次启动的自举（`eml.bootstrap.Bootstrap`）会自动完成：创建 `plugins/` 等目录；若 `versions/<版本>/<版本>.jar` 缺失则从 `piston-meta.mojang.com` 按版本清单下载**并校验 SHA-1**（库的适用性按清单自身的 `rules` 判定；跳过 LWJGL/natives）；然后带 `-javaagent` 重启自己（父进程继承退出码，避免无终端环境下 JVM 提前退出）。全过程只读写 gameDir。
+内存占用（JFR 实测）：空闲约 **86 MB** 活堆、进世界后约 **150 MB（甚至更低）**；默认 `-Xmx384m` + 8 字节对象头时 RSS 约 **340 MB**。`botinfo` 的 `used` 会更高，因为大堆 + 无内存压力时 G1 不主动回收垃圾，所以要用它的 `live heap` 行比较，而不是 `used`。
 
 ### 命令行参数
 
