@@ -192,6 +192,7 @@ public final class Commands {
       register(new Msgs());
       register(new Jfr());
       register(new PluginList());
+      register(new Login());
       // One action, three spellings. 'goto stop' stays the navigator's; these three exit the bot.
       register(new Quit("quit"));
       register(new Quit("end"));
@@ -1185,6 +1186,47 @@ public final class Commands {
          }
 
          return true;
+      }
+   }
+
+   /**
+    * Microsoft account login (device-code flow). The flow runs on a background thread so the console stays
+    * usable while the user approves the sign-in in a browser. The result is saved to {@code session.yml} and
+    * takes effect on the next start; the running client cannot swap its identity mid-session.
+    */
+   private static class Login implements Command {
+      @Override
+      public String name() {
+         return "login";
+      }
+
+      @Override
+      public String usage() {
+         return "login";
+      }
+
+      @Override
+      public String description() {
+         return BotLang.get("cmd.login.desc");
+      }
+
+      @Override
+      public void execute(final ConsoleIO io, final HeadlessSession session, final List<String> args) {
+         if (!args.isEmpty()) {
+            io.printError(BotLang.get("bot.usage", this.usage()));
+            return;
+         }
+
+         Thread worker = new Thread(() -> {
+            try {
+               MicrosoftSession account = MicrosoftAuth.deviceCodeLogin(io, new File(session.gameDirectory(), "session.yml"));
+               io.print(BotLang.get("bot.mslogin.restart_required", account.name()));
+            } catch (MicrosoftAuthException e) {
+               io.printError(BotLang.get("bot.mslogin.failed", e.getMessage()));
+            }
+         }, "Microsoft login");
+         worker.setDaemon(true);
+         worker.start();
       }
    }
 

@@ -14,6 +14,9 @@ import net.minecraft.client.headless.Console;
 import net.minecraft.client.headless.ConsoleIO;
 import net.minecraft.client.headless.HeadlessSession;
 import net.minecraft.client.headless.LayeredLanguage;
+import net.minecraft.client.headless.MicrosoftAuth;
+import net.minecraft.client.headless.MicrosoftAuthException;
+import net.minecraft.client.headless.MicrosoftSession;
 import net.minecraft.client.headless.ViewDistance;
 import net.minecraft.server.Bootstrap;
 import org.slf4j.Logger;
@@ -79,14 +82,31 @@ public final class BotApplication {
       io.printlnRaw("EML-HeadlessBOT (Minecraft " + SharedConstants.getCurrentVersion().name() + ", protocol "
          + SharedConstants.getProtocolVersion() + ")");
 
-      String username = args.get("username");
-      if (username == null) {
-         username = config.username();
-      }
+      String username;
+      MicrosoftSession microsoftSession = null;
+      if (online) {
+         // Online mode never uses --username/bot.yml's username: the real profile name comes back from
+         // Microsoft. Resolve it before the client is built so the login packet carries the real UUID.
+         try {
+            MicrosoftSession account = MicrosoftAuth.login(io, gameDirectory);
+            microsoftSession = account;
+            username = account.name();
+            io.print(BotLang.get("bot.mslogin.using", username, account.toUser().getProfileId()));
+         } catch (MicrosoftAuthException e) {
+            io.printError(BotLang.get("bot.mslogin.failed", e.getMessage()));
+            System.exit(3);
+            return;
+         }
+      } else {
+         username = args.get("username");
+         if (username == null) {
+            username = config.username();
+         }
 
-      if (username == null) {
-         username = ask(stdin, BotLang.get("bot.ask_username", args.getOrDefault("defaultUser", "Bot")), args.getOrDefault("defaultUser", "Bot"));
-         config.setUsername(username);
+         if (username == null) {
+            username = ask(stdin, BotLang.get("bot.ask_username", args.getOrDefault("defaultUser", "Bot")), args.getOrDefault("defaultUser", "Bot"));
+            config.setUsername(username);
+         }
       }
 
       // --viewDistance wins over the file; both accept 'auto' (follow the server) or a chunk count.
@@ -94,7 +114,7 @@ public final class BotApplication {
       ViewDistance viewDistance = requestedViewDistance == null
          ? config.viewDistance()
          : ViewDistance.parse(requestedViewDistance);
-      HeadlessSession session = new HeadlessSession(gameDirectory, username, online, viewDistance, io);
+      HeadlessSession session = new HeadlessSession(gameDirectory, username, microsoftSession, online, viewDistance, io);
       session.start();
 
       try {

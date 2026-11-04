@@ -22,6 +22,7 @@ import net.minecraft.network.protocol.game.ClientboundUpdateRecipesPacket;
 import net.minecraft.network.protocol.ping.ClientboundPongResponsePacket;
 import net.minecraft.util.Util;
 import top.mcocet.hlbot.plugins.BotPlugins;
+import top.mcocet.hlbot.plugins.events.chat.ChatMessageEvent;
 import top.mcocet.hlbot.plugins.events.player.PlayerDeathEvent;
 
 /** Static targets for the {@code Wrap} rules: one method per patched vanilla entry point. */
@@ -70,7 +71,7 @@ public final class BotHooks {
    /** Routes title text through the same event path as chat so AutoLogin can react to title-based login flows. */
    public static void onTitleText(final ClientPacketListener self,
                                   final net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket packet) {
-      BotChat.handle(Minecraft.getInstance(), true, "title", packet.text());
+      BotChat.handle(Minecraft.getInstance(), true, "title", packet.text(), ChatMessageEvent.Kind.TITLE, null);
    }
 
    // ==================== plugin events ====================

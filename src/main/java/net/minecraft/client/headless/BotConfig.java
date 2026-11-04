@@ -44,6 +44,8 @@ public final class BotConfig {
    private int pingTimeoutSeconds = 5;
    private int reconnectDelaySeconds = 5;
    private int reconnectAttempts;
+   /** How often to silently renew the Microsoft session while running (minutes); 0 disables it. */
+   private int sessionRefreshMinutes = 360;
    private boolean debugPackets;
    private boolean debugConnect = true;
    private boolean debugErrors = true;
@@ -81,6 +83,7 @@ public final class BotConfig {
                config.pingTimeoutSeconds = intValue(map.get("pingTimeoutSeconds"), 5);
                config.reconnectDelaySeconds = intValue(map.get("reconnectDelaySeconds"), 5);
                config.reconnectAttempts = intValue(map.get("reconnectAttempts"), 0);
+               config.sessionRefreshMinutes = intValue(map.get("sessionRefreshMinutes"), 360);
 
                if (map.get("debug") instanceof Map<?, ?> debug) {
                   boolean enabled = boolValue(debug.get("enabled"), false);
@@ -187,6 +190,11 @@ public final class BotConfig {
       return Math.max(0, this.reconnectAttempts);
    }
 
+   /** How often to silently renew the Microsoft session while running; 0 disables the periodic refresh. */
+   public int sessionRefreshMinutes() {
+      return this.sessionRefreshMinutes <= 0 ? 0 : Math.max(30, this.sessionRefreshMinutes);
+   }
+
    /** Diagnosis switches, mirrored in {@code eml.util.Debug} for the patched-engine hooks. */
    public boolean debugPackets() {
       return this.debugPackets;
@@ -246,7 +254,9 @@ public final class BotConfig {
          + "# It is exposed to autologin.yml rules as {{password}}.\n"
          + "password: " + this.password + "\n"
          + "# online: false (default) plays offline - the username derives a stable UUID and no login runs.\n"
-         + "# online: true switches the client to real-account mode (a valid access token is required).\n"
+         + "# online: true uses a Microsoft account: on start the bot reuses/refreshes session.yml or prints a\n"
+         + "# device-code login prompt (see the 'login' console command). While running, the session is silently\n"
+         + "# renewed on the sessionRefreshMinutes schedule below (0 disables it).\n"
          + "online: " + this.online + "\n"
          + "# How much world to ask for: 'auto' (default) follows the server's view distance, which is adopted\n"
          + "# once the login packet names it; a number 2..32 caps it. A headless client pays for every chunk it\n"
@@ -266,6 +276,8 @@ public final class BotConfig {
          + "autoReconnect: " + this.autoReconnect + "\n"
          + "reconnectDelaySeconds: " + this.reconnectDelaySeconds + "\n"
          + "reconnectAttempts: " + this.reconnectAttempts + "\n"
+         + "# Microsoft session renewal while the bot runs (online mode only). 0 disables it.\n"
+         + "sessionRefreshMinutes: " + this.sessionRefreshMinutes + "\n"
          + "# Diagnostics: enabled turns on everything below; each switch can also be set individually,\n"
          + "# and on the command line with -Deml.debug.<name>=true for a single launch.\n"
          + "debug:\n"

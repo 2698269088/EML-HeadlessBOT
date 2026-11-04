@@ -36,13 +36,21 @@ public final class HeadlessSession {
    private final ConsoleIO io;
    private final boolean online;
    private final String username;
+   /** Resolved Microsoft account identity; null in offline mode. */
+   private final User sessionUser;
+   /** The cached Microsoft session that produced {@link #sessionUser}; null in offline mode. */
+   private final MicrosoftSession microsoftSession;
    private final ViewDistance viewDistance;
    private final CompletableFuture<Minecraft> clientFuture = new CompletableFuture<>();
    private volatile Thread clientThread;
+   /** Renews the Microsoft session on a timer while the bot runs; null in offline mode or when disabled. */
+   private MicrosoftSessionRefresher refresher;
 
-   public HeadlessSession(final File gameDirectory, final String username, final boolean online, final ViewDistance viewDistance, final ConsoleIO io) {
+   public HeadlessSession(final File gameDirectory, final String username, final MicrosoftSession microsoftSession, final boolean online, final ViewDistance viewDistance, final ConsoleIO io) {
       this.gameDirectory = gameDirectory;
       this.username = username;
+      this.microsoftSession = microsoftSession;
+      this.sessionUser = microsoftSession != null ? microsoftSession.toUser() : null;
       this.online = online;
       this.viewDistance = viewDistance;
       this.io = io;
@@ -59,6 +67,13 @@ public final class HeadlessSession {
       eml.hooks.BotRuntime.setReconnectHandler(() -> this.connect(eml.hooks.BotRuntime.targetHost(), eml.hooks.BotRuntime.targetPort()));
       this.clientThread = new Thread(this::runClientThread, "Client thread");
       this.clientThread.start();
+
+      if (this.online && this.microsoftSession != null) {
+         BotConfig config = BotConfig.instance();
+         int minutes = config == null ? 0 : config.sessionRefreshMinutes();
+         this.refresher = new MicrosoftSessionRefresher(this, this.microsoftSession, minutes);
+         this.refresher.start();
+      }
    }
 
    /**
@@ -76,7 +91,7 @@ public final class HeadlessSession {
       // the console thread would never reach `quit`, and a headless process would just sit there. Completing
       // the future exceptionally turns that into the startup failure it is (BotApplication exits with code 3).
       try {
-         User user = BotActions.offlineUser(this.username);
+         User user = this.sessionUser != null ? this.sessionUser : BotActions.offlineUser(this.username);
          GameConfig config = BotActions.gameConfig(
             this.gameDirectory,
             assetDirectory(),
@@ -156,6 +171,31 @@ public final class HeadlessSession {
 
    public String username() {
       return this.username;
+   }
+
+   /**
+    * Applies a renewed Microsoft session to the running client. The identity (name/UUID) never changes here,
+    * only the short-lived Minecraft access token (and xuid/clientId when the refresh reports them), so the
+    * next login handshake - for example after an auto-reconnect - presents a fresh token.
+    */
+   public void applyRefreshedSession(final MicrosoftSession updated) {
+      Minecraft client = this.clientNow();
+      if (client == null) {
+         return;
+      }
+
+      client.execute(() -> {
+         User user = client.user;
+         if (user != null) {
+            user.accessToken = updated.accessToken();
+            if (updated.xuid() != null && !updated.xuid().isBlank()) {
+               user.xuid = java.util.Optional.of(updated.xuid());
+            }
+            if (updated.clientId() != null && !updated.clientId().isBlank()) {
+               user.clientId = java.util.Optional.of(updated.clientId());
+            }
+         }
+      });
    }
 
    /** The working directory the bot runs in (logs, resourcepacks, plugins live here). */
@@ -270,6 +310,11 @@ public final class HeadlessSession {
    }
 
    public void shutdown() {
+      if (this.refresher != null) {
+         this.refresher.stop();
+         this.refresher = null;
+      }
+
       eml.hooks.BotRuntime.markUserDisconnect();
       Minecraft client = this.clientFuture.join();
       if (client != null) {
