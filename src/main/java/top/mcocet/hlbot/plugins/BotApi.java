@@ -193,6 +193,46 @@ public final class BotApi {
    }
 
    /**
+    * Players the client currently sees within {@code radius} blocks, nearest first. Pass {@code 0} (or a
+    * negative number) for "every player loaded on this client".
+    *
+    * <p>Safe to call from any thread, like {@link #onlinePlayers()}: the read is posted to the client thread
+    * and answered with a bounded wait. Positions are the server's last word on those entities, not a
+    * prediction, so a player walking away can be a tick or two behind.
+    */
+   public List<NearbyPlayer> nearbyPlayers(final double radius) {
+      return this.onClientThread(() -> {
+         Minecraft client = this.session.clientNow();
+
+         if (client == null || client.level == null || client.player == null) {
+            return List.<NearbyPlayer>of();
+         }
+
+         net.minecraft.client.player.LocalPlayer self = client.player;
+         List<NearbyPlayer> found = new ArrayList<>();
+
+         for (net.minecraft.client.player.AbstractClientPlayer other : client.level.players) {
+            if (other == self) {
+               continue;
+            }
+
+            double distance = Math.sqrt(other.distanceToSqr(self));
+            if (radius > 0.0 && distance > radius) {
+               continue;
+            }
+
+            com.mojang.authlib.GameProfile profile = other.getGameProfile();
+            String name = profile == null ? "" : profile.name();
+            found.add(new NearbyPlayer(name, String.valueOf(other.getUUID()),
+               other.getX(), other.getY(), other.getZ(), distance, other.isShiftKeyDown()));
+         }
+
+         found.sort(Comparator.comparingDouble(NearbyPlayer::distance));
+         return found;
+      }, List.of());
+   }
+
+   /**
     * Process and session counters as plain values. Safe to call from any thread: nothing here needs the
     * client thread except the tick and ping clocks, which are already volatile statics.
     */
