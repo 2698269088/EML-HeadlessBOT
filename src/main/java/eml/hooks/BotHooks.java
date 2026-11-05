@@ -22,6 +22,7 @@ import net.minecraft.network.protocol.game.ClientboundUpdateRecipesPacket;
 import net.minecraft.network.protocol.ping.ClientboundPongResponsePacket;
 import net.minecraft.util.Util;
 import top.mcocet.hlbot.plugins.BotPlugins;
+import top.mcocet.hlbot.plugins.events.chat.ChatMessageEvent;
 import top.mcocet.hlbot.plugins.events.player.PlayerDeathEvent;
 
 /** Static targets for the {@code Wrap} rules: one method per patched vanilla entry point. */
@@ -65,6 +66,12 @@ public final class BotHooks {
     */
    public static void onPongResponse(final ClientPacketListener self, final ClientboundPongResponsePacket packet) {
       BotRuntime.recordPingMs(Util.getMillis() - packet.time());
+   }
+
+   /** Routes title text through the same event path as chat so AutoLogin can react to title-based login flows. */
+   public static void onTitleText(final ClientPacketListener self,
+                                  final net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket packet) {
+      BotChat.handle(Minecraft.getInstance(), true, "title", packet.text(), ChatMessageEvent.Kind.TITLE, null);
    }
 
    // ==================== plugin events ====================
@@ -146,6 +153,42 @@ public final class BotHooks {
    public static void onContainerClose(final ClientPacketListener self, final ClientboundContainerClosePacket packet) {
       top.mcocet.hlbot.plugins.BotPlugins.fire(
          new top.mcocet.hlbot.plugins.events.player.ContainerClosedEvent(packet.getContainerId()));
+   }
+
+   public static void onOpenScreen(final ClientPacketListener self,
+                                   final net.minecraft.network.protocol.game.ClientboundOpenScreenPacket packet) {
+      LocalPlayer player = Minecraft.getInstance().player;
+      if (player != null) {
+         BotPlugins.fire(new top.mcocet.hlbot.plugins.events.player.ContainerOpenedEvent(
+            player.containerMenu, packet.getTitle()));
+      }
+   }
+
+   public static void onContainerSetContent(final ClientPacketListener self,
+                                            final net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket packet) {
+      LocalPlayer player = Minecraft.getInstance().player;
+      if (player == null || player.containerMenu.containerId != packet.containerId()) {
+         return;
+      }
+
+      for (int slot = 0; slot < player.containerMenu.slots.size(); slot++) {
+         fireContainerSlot(player.containerMenu, slot);
+      }
+   }
+
+   public static void onContainerSetSlot(final ClientPacketListener self,
+                                         final net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket packet) {
+      LocalPlayer player = Minecraft.getInstance().player;
+      if (player != null && player.containerMenu.containerId == packet.getContainerId()) {
+         fireContainerSlot(player.containerMenu, packet.getSlot());
+      }
+   }
+
+   private static void fireContainerSlot(final net.minecraft.world.inventory.AbstractContainerMenu menu, final int slot) {
+      if (slot >= 0 && slot < menu.slots.size()) {
+         BotPlugins.fire(new top.mcocet.hlbot.plugins.events.player.ContainerSlotUpdatedEvent(
+            menu, slot, menu.getSlot(slot).getItem()));
+      }
    }
 
    public static void onUpdateRecipes(final ClientPacketListener self, final ClientboundUpdateRecipesPacket packet) {

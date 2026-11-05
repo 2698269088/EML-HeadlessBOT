@@ -18,6 +18,7 @@ import eml.action.BotInventory;
 import eml.action.BotPlayer;
 import eml.action.BotWorld;
 import top.mcocet.hlbot.plugins.event.Listener;
+import top.mcocet.hlbot.nav.BotNavigation;
 
 /**
  * The facade through which plugins interact with the bot. One instance is shared by all
@@ -36,6 +37,7 @@ public final class BotApi {
    private final BotWorld world;
    private final BotControls controls;
    private final BotInventory inventory;
+   private final BotNavigation navigation = new BotNavigation();
    private PluginManager pluginManager;
 
    BotApi(final HeadlessSession session, final ConsoleIO console) {
@@ -44,6 +46,14 @@ public final class BotApi {
       this.world = new BotWorld(session::currentLevel);
       this.controls = new BotControls(session::clientNow);
       this.inventory = new BotInventory(session::clientNow);
+   }
+
+   /**
+    * Built-in trips: walking (with swimming, climbing and digging), elytra travel and vehicle riding. Every
+    * call only queues a request, so it is safe from any thread; a new trip replaces the one in progress.
+    */
+   public BotNavigation navigation() {
+      return this.navigation;
    }
 
    /** Wiring done by {@link BotPlugins#init}; never call this from a plugin. */
@@ -179,6 +189,46 @@ public final class BotApi {
 
          snapshots.sort(Comparator.comparing(PlayerSnapshot::name, String.CASE_INSENSITIVE_ORDER));
          return snapshots;
+      }, List.of());
+   }
+
+   /**
+    * Players the client currently sees within {@code radius} blocks, nearest first. Pass {@code 0} (or a
+    * negative number) for "every player loaded on this client".
+    *
+    * <p>Safe to call from any thread, like {@link #onlinePlayers()}: the read is posted to the client thread
+    * and answered with a bounded wait. Positions are the server's last word on those entities, not a
+    * prediction, so a player walking away can be a tick or two behind.
+    */
+   public List<NearbyPlayer> nearbyPlayers(final double radius) {
+      return this.onClientThread(() -> {
+         Minecraft client = this.session.clientNow();
+
+         if (client == null || client.level == null || client.player == null) {
+            return List.<NearbyPlayer>of();
+         }
+
+         net.minecraft.client.player.LocalPlayer self = client.player;
+         List<NearbyPlayer> found = new ArrayList<>();
+
+         for (net.minecraft.client.player.AbstractClientPlayer other : client.level.players) {
+            if (other == self) {
+               continue;
+            }
+
+            double distance = Math.sqrt(other.distanceToSqr(self));
+            if (radius > 0.0 && distance > radius) {
+               continue;
+            }
+
+            com.mojang.authlib.GameProfile profile = other.getGameProfile();
+            String name = profile == null ? "" : profile.name();
+            found.add(new NearbyPlayer(name, String.valueOf(other.getUUID()),
+               other.getX(), other.getY(), other.getZ(), distance, other.isShiftKeyDown()));
+         }
+
+         found.sort(Comparator.comparingDouble(NearbyPlayer::distance));
+         return found;
       }, List.of());
    }
 

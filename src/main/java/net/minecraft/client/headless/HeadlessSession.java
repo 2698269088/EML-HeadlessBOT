@@ -36,13 +36,21 @@ public final class HeadlessSession {
    private final ConsoleIO io;
    private final boolean online;
    private final String username;
+   /** Resolved Microsoft account identity; null in offline mode. */
+   private final User sessionUser;
+   /** The cached Microsoft session that produced {@link #sessionUser}; null in offline mode. */
+   private final MicrosoftSession microsoftSession;
    private final ViewDistance viewDistance;
    private final CompletableFuture<Minecraft> clientFuture = new CompletableFuture<>();
    private volatile Thread clientThread;
+   /** Renews the Microsoft session on a timer while the bot runs; null in offline mode or when disabled. */
+   private MicrosoftSessionRefresher refresher;
 
-   public HeadlessSession(final File gameDirectory, final String username, final boolean online, final ViewDistance viewDistance, final ConsoleIO io) {
+   public HeadlessSession(final File gameDirectory, final String username, final MicrosoftSession microsoftSession, final boolean online, final ViewDistance viewDistance, final ConsoleIO io) {
       this.gameDirectory = gameDirectory;
       this.username = username;
+      this.microsoftSession = microsoftSession;
+      this.sessionUser = microsoftSession != null ? microsoftSession.toUser() : null;
       this.online = online;
       this.viewDistance = viewDistance;
       this.io = io;
@@ -59,6 +67,13 @@ public final class HeadlessSession {
       eml.hooks.BotRuntime.setReconnectHandler(() -> this.connect(eml.hooks.BotRuntime.targetHost(), eml.hooks.BotRuntime.targetPort()));
       this.clientThread = new Thread(this::runClientThread, "Client thread");
       this.clientThread.start();
+
+      if (this.online && this.microsoftSession != null) {
+         BotConfig config = BotConfig.instance();
+         int minutes = config == null ? 0 : config.sessionRefreshMinutes();
+         this.refresher = new MicrosoftSessionRefresher(this, this.microsoftSession, minutes);
+         this.refresher.start();
+      }
    }
 
    /**
@@ -67,7 +82,8 @@ public final class HeadlessSession {
     * the patched engine ({@code eml.hooks.BotDebug}) and are switched on by {@code bot.yml}'s debug block.
     */
    private void installDiagnostics() {
-      Thread.setDefaultUncaughtExceptionHandler((thread, error) -> LOGGER.error("Uncaught exception on {}", thread.getName(), error));
+      eml.util.CrashReporter.install();
+      eml.util.CrashReporter.installStateWriter(this::writeCrashState);
       LOGGER.info("debug switches: {}", eml.util.Debug.describe());
    }
 
@@ -76,7 +92,7 @@ public final class HeadlessSession {
       // the console thread would never reach `quit`, and a headless process would just sit there. Completing
       // the future exceptionally turns that into the startup failure it is (BotApplication exits with code 3).
       try {
-         User user = BotActions.offlineUser(this.username);
+         User user = this.sessionUser != null ? this.sessionUser : BotActions.offlineUser(this.username);
          GameConfig config = BotActions.gameConfig(
             this.gameDirectory,
             assetDirectory(),
@@ -114,7 +130,54 @@ public final class HeadlessSession {
          }
       } catch (Throwable failure) {
          this.clientFuture.completeExceptionally(failure);
-         LOGGER.error("Client thread failed during startup", failure);
+         eml.util.CrashReporter.report(Thread.currentThread(), failure);
+      }
+   }
+
+   private void writeCrashState(final java.io.PrintStream out) {
+      crashState(out, "Username", () -> this.username);
+      crashState(out, "Target server", () -> BotRuntime.targetHost() + ":" + BotRuntime.targetPort());
+      crashState(out, "Client thread", () -> this.clientThread == null ? "not started" : this.clientThread.getState());
+      crashState(out, "Ticks", BotRuntime::tickCount);
+      crashState(out, "Last ping", () -> BotRuntime.lastPingMs() < 0L ? "unavailable" : BotRuntime.lastPingMs() + " ms");
+      crashState(out, "Respawn scheduled", BotRuntime::respawnScheduled);
+      crashState(out, "Navigation", () -> top.mcocet.hlbot.nav.Navigator.INSTANCE.statusText());
+
+      Minecraft client = this.clientNow();
+      crashState(out, "Client initialised", () -> client != null);
+      if (client == null) {
+         return;
+      }
+
+      crashState(out, "Profile", () -> client.getUser().getName() + " (" + client.getUser().getProfileId() + ")");
+      net.minecraft.client.multiplayer.ClientPacketListener connection = client.getConnection();
+      crashState(out, "Connection", () -> connection == null ? "not connected" : connection.getConnection().getRemoteAddress());
+
+      net.minecraft.client.multiplayer.ClientLevel level = client.level;
+      crashState(out, "Dimension", () -> level == null ? "none" : level.dimension());
+      crashState(out, "View distance", () -> client.options.renderDistance().get());
+      if (level != null) {
+         crashState(out, "Loaded chunks", () -> level.getChunkSource() instanceof net.minecraft.client.multiplayer.ClientChunkCache cache
+            ? cache.getLoadedChunksCount() : "unavailable");
+         crashState(out, "Entities", level::getEntityCount);
+      }
+
+      net.minecraft.client.player.LocalPlayer player = client.player;
+      crashState(out, "Player present", () -> player != null);
+      if (player != null) {
+         crashState(out, "Position", () -> String.format(java.util.Locale.ROOT, "%.3f, %.3f, %.3f",
+            player.getX(), player.getY(), player.getZ()));
+         crashState(out, "Health", player::getHealth);
+         crashState(out, "Dead or dying", player::isDeadOrDying);
+         crashState(out, "Gliding", player::isFallFlying);
+      }
+   }
+
+   private static void crashState(final java.io.PrintStream out, final String name, final java.util.function.Supplier<?> value) {
+      try {
+         out.println(name + ": " + value.get());
+      } catch (Throwable unavailable) {
+         out.println(name + ": unavailable (" + unavailable.getClass().getName() + ")");
       }
    }
 
@@ -156,6 +219,31 @@ public final class HeadlessSession {
 
    public String username() {
       return this.username;
+   }
+
+   /**
+    * Applies a renewed Microsoft session to the running client. The identity (name/UUID) never changes here,
+    * only the short-lived Minecraft access token (and xuid/clientId when the refresh reports them), so the
+    * next login handshake - for example after an auto-reconnect - presents a fresh token.
+    */
+   public void applyRefreshedSession(final MicrosoftSession updated) {
+      Minecraft client = this.clientNow();
+      if (client == null) {
+         return;
+      }
+
+      client.execute(() -> {
+         User user = client.user;
+         if (user != null) {
+            user.accessToken = updated.accessToken();
+            if (updated.xuid() != null && !updated.xuid().isBlank()) {
+               user.xuid = java.util.Optional.of(updated.xuid());
+            }
+            if (updated.clientId() != null && !updated.clientId().isBlank()) {
+               user.clientId = java.util.Optional.of(updated.clientId());
+            }
+         }
+      });
    }
 
    /** The working directory the bot runs in (logs, resourcepacks, plugins live here). */
@@ -270,6 +358,11 @@ public final class HeadlessSession {
    }
 
    public void shutdown() {
+      if (this.refresher != null) {
+         this.refresher.stop();
+         this.refresher = null;
+      }
+
       eml.hooks.BotRuntime.markUserDisconnect();
       Minecraft client = this.clientFuture.join();
       if (client != null) {

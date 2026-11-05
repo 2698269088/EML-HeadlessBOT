@@ -33,6 +33,7 @@ public final class EML {
       if (System.getProperty("eml.gameDir") == null) {
          System.setProperty("eml.gameDir", Bootstrap.gameDirectory(rawArgs).getAbsolutePath());
       }
+      eml.util.CrashReporter.install();
 
       // Returning false means the runtime could not be prepared; the relaunch path never returns.
       if (!Bootstrap.prepare(rawArgs)) {
@@ -46,7 +47,7 @@ public final class EML {
          LaunchLog.error("[launcher] " + BOT_ENTRY_POINT + " is missing from this jar - rebuild it with `mvn package`.");
          System.exit(4);
       } catch (ReflectiveOperationException e) {
-         LaunchLog.error("[launcher] the bot main failed", e.getCause() == null ? e : e.getCause());
+         eml.util.CrashReporter.report(Thread.currentThread(), e.getCause() == null ? e : e.getCause());
          System.exit(5);
       }
    }

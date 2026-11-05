@@ -138,6 +138,13 @@ public final class BotRuntime {
       // Tick-driven scheduler: fires sync tasks here on the client thread and dispatches async ones to
       // the worker pool. Runs after ClientTickEvent so a plugin's per-tick logic and timers share order.
       top.mcocet.hlbot.plugins.BotScheduler.INSTANCE.pump();
+      // Built-in pathfinder (`goto`). It drives the same KeyMapping flags aiStep reads later in this tick,
+      // so it runs on the client thread, one step behind the plugins' own per-tick decisions. It is handed a
+      // snapshot rather than the client, which is what keeps the whole nav package free of game types.
+      var localPlayer = client.player;
+      var snapshot = localPlayer == null ? null : eml.action.BotPlayer.of(localPlayer);
+      top.mcocet.hlbot.nav.Navigator.INSTANCE.tick(snapshot, client.getConnection() != null);
+      top.mcocet.hlbot.superpearl.SuperPearl.INSTANCE.tick(snapshot);
       autoReconnect(client);
       pingProbe(client);
       heartbeat(client);

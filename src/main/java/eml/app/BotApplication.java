@@ -14,6 +14,9 @@ import net.minecraft.client.headless.Console;
 import net.minecraft.client.headless.ConsoleIO;
 import net.minecraft.client.headless.HeadlessSession;
 import net.minecraft.client.headless.LayeredLanguage;
+import net.minecraft.client.headless.MicrosoftAuth;
+import net.minecraft.client.headless.MicrosoftAuthException;
+import net.minecraft.client.headless.MicrosoftSession;
 import net.minecraft.client.headless.ViewDistance;
 import net.minecraft.server.Bootstrap;
 import org.slf4j.Logger;
@@ -79,14 +82,31 @@ public final class BotApplication {
       io.printlnRaw("EML-HeadlessBOT (Minecraft " + SharedConstants.getCurrentVersion().name() + ", protocol "
          + SharedConstants.getProtocolVersion() + ")");
 
-      String username = args.get("username");
-      if (username == null) {
-         username = config.username();
-      }
+      String username;
+      MicrosoftSession microsoftSession = null;
+      if (online) {
+         // Online mode never uses --username/bot.yml's username: the real profile name comes back from
+         // Microsoft. Resolve it before the client is built so the login packet carries the real UUID.
+         try {
+            MicrosoftSession account = MicrosoftAuth.login(io, gameDirectory);
+            microsoftSession = account;
+            username = account.name();
+            io.print(BotLang.get("bot.mslogin.using", username, account.toUser().getProfileId()));
+         } catch (MicrosoftAuthException e) {
+            io.printError(BotLang.get("bot.mslogin.failed", e.getMessage()));
+            System.exit(3);
+            return;
+         }
+      } else {
+         username = args.get("username");
+         if (username == null) {
+            username = config.username();
+         }
 
-      if (username == null) {
-         username = ask(stdin, BotLang.get("bot.ask_username", args.getOrDefault("defaultUser", "Bot")), args.getOrDefault("defaultUser", "Bot"));
-         config.setUsername(username);
+         if (username == null) {
+            username = ask(stdin, BotLang.get("bot.ask_username", args.getOrDefault("defaultUser", "Bot")), args.getOrDefault("defaultUser", "Bot"));
+            config.setUsername(username);
+         }
       }
 
       // --viewDistance wins over the file; both accept 'auto' (follow the server) or a chunk count.
@@ -94,7 +114,7 @@ public final class BotApplication {
       ViewDistance viewDistance = requestedViewDistance == null
          ? config.viewDistance()
          : ViewDistance.parse(requestedViewDistance);
-      HeadlessSession session = new HeadlessSession(gameDirectory, username, online, viewDistance, io);
+      HeadlessSession session = new HeadlessSession(gameDirectory, username, microsoftSession, online, viewDistance, io);
       session.start();
 
       try {
@@ -103,6 +123,32 @@ public final class BotApplication {
          LOGGER.error("Headless client failed to initialise", e);
          System.exit(3);
       }
+
+      // Built-in pathfinding (`goto`): walking/swimming/climbing, elytra travel and vehicle riding. The
+      // navigator is handed the primitive facades plus a message sink, which is what keeps the whole nav
+      // package free of net.minecraft types; the per-tick call lives in BotRuntime.onClientTick.
+      eml.action.BotWorld world = new eml.action.BotWorld(session::currentLevel);
+      eml.action.BotControls controls = new eml.action.BotControls(session::clientNow);
+      top.mcocet.hlbot.nav.NavOutput navOutput = new top.mcocet.hlbot.nav.NavOutput() {
+         @Override
+         public void line(final String key, final Object... args) {
+            io.print(BotLang.get(key, args));
+         }
+
+         @Override
+         public void error(final String key, final Object... args) {
+            io.printError(BotLang.get(key, args));
+         }
+      };
+      top.mcocet.hlbot.nav.Navigator.INSTANCE.install(world, controls, navOutput);
+      Commands.register(new top.mcocet.hlbot.nav.GotoCommand());
+
+      // SuperPearl (`sp`): walk to a pearl button, press it and let the pearl carry the body home. Same
+      // facades as the navigator - one terrain cache, one key driver - and the same key-based output, so its
+      // lines are localised like every other command's. Its config lives next to bot.yml and is seeded on
+      // first run; the tick call sits in BotRuntime next to the navigator's.
+      top.mcocet.hlbot.superpearl.SuperPearl.INSTANCE.install(gameDirectory, controls, world, navOutput);
+      Commands.register(top.mcocet.hlbot.superpearl.SuperPearl.INSTANCE);
 
       Console console = new Console(io, session, stdin);
       console.startAsync();
@@ -114,6 +160,15 @@ public final class BotApplication {
       BotPlugins.init(new File(gameDirectory, "plugins"), session, io);
       // Paper-style isolation: a failing plugin is disabled, never left half-alive.
       BotPlugins.configureFaultPolicy(config.pluginsDisableOnError(), config.pluginsFailThreshold());
+
+      // Built-in advertising (ported from EMLPga): promo.yml next to bot.yml is seeded on first run, and its
+      // `enabled` switch decides whether anything is armed. The instance is wired outside the plugin manager,
+      // so no jar and no plugins/ folder are involved.
+      installPromo(gameDirectory);
+
+      // Built-in AutoLogin: rule-action login flow driven by autologin.yml, with the password coming
+      // from bot.yml. Installed once at startup; its listener stays active and resets on every connect.
+      installAutoLogin(gameDirectory);
 
       String server = args.getOrDefault("server", args.getOrDefault("address", config.server()));
       if (!server.isEmpty()) {
@@ -146,8 +201,67 @@ public final class BotApplication {
       BotTerminal.close();
    }
 
-   private static String ask(final BufferedReader reader, final String question, final String defaultValue) {
-      // Same blue input colour as the console prompt (see ConsoleIO), but only when a capable terminal
+   /**
+    * Wires the built-in advertising feature (ported from EMLPga). {@code promo.yml} sits next to
+    * {@code bot.yml}: it is seeded from the bundled template on first run, and its {@code enabled} switch
+    * decides whether the campaign, the greeter and the console command are armed at all.
+    */
+   private static void installPromo(final File gameDirectory) {
+      File promoFile = new File(gameDirectory, "promo.yml");
+      boolean enabled = false;
+
+      try {
+         if (!promoFile.isFile()) {
+            try (java.io.InputStream template = BotApplication.class.getResourceAsStream("/promo/config.yml")) {
+               if (template != null) {
+                  java.nio.file.Files.copy(template, promoFile.toPath());
+               }
+            }
+         }
+
+         if (promoFile.isFile()) {
+            try (java.io.InputStream in = java.nio.file.Files.newInputStream(promoFile.toPath())) {
+               Object root = new org.yaml.snakeyaml.Yaml().load(in);
+
+               if (root instanceof java.util.Map<?, ?> map) {
+                  Object flag = map.get("enabled");
+                  enabled = flag != null && Boolean.parseBoolean(String.valueOf(flag));
+               }
+            }
+         }
+      } catch (Exception failed) {
+         LOGGER.warn("Could not read {}", promoFile.getName(), failed);
+         return;
+      }
+
+      top.mcocet.hlbot.promo.EmlPgaPlugin promo = new top.mcocet.hlbot.promo.EmlPgaPlugin();
+      promo.attach("EMLPga", promoFile, top.mcocet.hlbot.plugins.BotPlugins.api());
+      promo.onLoad();
+
+      if (!enabled) {
+         LOGGER.info("Advertising is off (promo.yml: enabled: false)");
+         return;
+      }
+
+      promo.onEnable();
+      LOGGER.info("Advertising enabled from {}", promoFile.getName());
+   }
+
+   /**
+    * Wires the built-in AutoLogin feature. {@code autologin.yml} sits next to {@code bot.yml}; it is
+    * seeded from the bundled template on first run. The listener is registered regardless of
+    * {@code enabled} (the engine simply stays idle while disabled), so {@code autologin reload} can
+    * switch it on without a restart.
+    */
+   private static void installAutoLogin(final File gameDirectory) {
+      top.mcocet.hlbot.autologin.AutoLogin autoLogin = new top.mcocet.hlbot.autologin.AutoLogin();
+      autoLogin.install(gameDirectory, top.mcocet.hlbot.plugins.BotPlugins.api());
+      autoLogin.onLoad();
+      autoLogin.onEnable();
+      Commands.register(new top.mcocet.hlbot.autologin.AutoLoginCommand(autoLogin));
+   }
+
+   private static String ask(final BufferedReader reader, final String question, final String defaultValue) {      // Same blue input colour as the console prompt (see ConsoleIO), but only when a capable terminal
       // answers for it: on a pipe, container or dumb console the raw escape codes would show as garbage.
       boolean colors = BotTerminal.colorsSupported();
       Bootstrap.STDOUT.print(question + (colors ? "\u001B[94m" : ""));

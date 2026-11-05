@@ -8,11 +8,14 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.chat.ChatListener;
 import net.minecraft.client.multiplayer.chat.ChatTrustLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.Holder;
+import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MessageSignature;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.chat.ChatType.Bound;
 import net.minecraft.util.Util;
+import top.mcocet.hlbot.plugins.events.chat.ChatMessageEvent;
 
 /**
  * Donor bodies for {@code ChatListener}: keep the vanilla decoration, trust evaluation, filtering and
@@ -47,7 +50,8 @@ public final class ChatListenerRouting {
          return;
       }
 
-      boolean cancelled = eml.hooks.BotChat.handle(self.minecraft, false, sender.name(), decorated);
+      boolean cancelled = eml.hooks.BotChat.handle(self.minecraft, false, sender.name(), decorated,
+         ChatMessageEvent.Kind.PUBLIC, sender.name());
       self.previousMessageTime = Util.getMillis();
       ClientPacketListener connection = self.minecraft.getConnection();
       if (connection != null && message.signature() != null) {
@@ -66,7 +70,8 @@ public final class ChatListenerRouting {
       }
 
       Component decorated = boundChatType.decorate(message);
-      eml.hooks.BotChat.handle(self.minecraft, false, "player", decorated);
+      eml.hooks.BotChat.handle(self.minecraft, false, "player", decorated,
+         kindOf(boundChatType), senderNameOf(boundChatType));
       self.previousMessageTime = Util.getMillis();
    }
 
@@ -81,7 +86,8 @@ public final class ChatListenerRouting {
          return;
       }
 
-      eml.hooks.BotChat.handle(self.minecraft, remote, remote ? "server" : "client", message);
+      eml.hooks.BotChat.handle(self.minecraft, remote, remote ? "server" : "client", message,
+         ChatMessageEvent.Kind.SYSTEM, null);
       if (remote) {
          self.logSystemMessage(message, Instant.now());
       }
@@ -89,7 +95,8 @@ public final class ChatListenerRouting {
 
    /** {@code handleOverlay(Component)} - the action bar line, printed like any other message. */
    public static void overlayMessage(final ChatListener self, final Component message) {
-      eml.hooks.BotChat.handle(self.minecraft, true, "overlay", Component.literal("[overlay] ").append(message));
+      eml.hooks.BotChat.handle(self.minecraft, true, "overlay", Component.literal("[overlay] ").append(message),
+         ChatMessageEvent.Kind.OVERLAY, null);
    }
 
    /** {@code handleChatMessageError(UUID, MessageSignature, ChatType.Bound)}. */
@@ -109,8 +116,37 @@ public final class ChatListenerRouting {
       }
 
       Component decorated = boundChatType.decorate(ChatValidationProbe.error());
-      eml.hooks.BotChat.handle(self.minecraft, false, "player", decorated);
+      eml.hooks.BotChat.handle(self.minecraft, false, "player", decorated,
+         kindOf(boundChatType), senderNameOf(boundChatType));
       self.previousMessageTime = Util.getMillis();
+   }
+
+   /**
+    * Which vanilla chat type a binding stands for: the {@code /msg} inbox or public chat. Public because the
+    * donor body above is copied into {@code ChatListener}, where this call site is resolved against that
+    * class - a package-private helper would throw IllegalAccessError.
+    */
+   public static ChatMessageEvent.Kind kindOf(final Bound bound) {
+      if (bound == null) {
+         return ChatMessageEvent.Kind.PUBLIC;
+      }
+
+      Holder<ChatType> holder = bound.chatType();
+      if (holder != null && (holder.is(ChatType.MSG_COMMAND_INCOMING) || holder.is(ChatType.TEAM_MSG_COMMAND_INCOMING))) {
+         return ChatMessageEvent.Kind.PRIVATE;
+      }
+
+      return ChatMessageEvent.Kind.PUBLIC;
+   }
+
+   /**
+    * The sender display name vanilla put in the chat type binding - the only place a private message names
+    * its author, since the disguised-chat packet carries no profile. Null when there is none.
+    */
+   public static String senderNameOf(final Bound bound) {
+      Component name = bound == null ? null : bound.name();
+      String text = name == null ? null : name.getString();
+      return text == null || text.isBlank() ? null : text.trim();
    }
 
    /**

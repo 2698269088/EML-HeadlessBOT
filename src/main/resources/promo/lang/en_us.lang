@@ -1,0 +1,148 @@
+# EMLPga - English
+# Format: key=value; {0} {1} are replaced in order. A missing key falls back to zh_cn, then to the key itself.
+
+# ---------- plugin ----------
+plugin.enabled=EMLPga {0} enabled (language {1}). Try '/promo help'
+plugin.idle=EMLPga loaded, but enabled=false so advertising will not start on its own
+
+# ---------- campaign ----------
+campaign.started=Advertising started (mode {0})
+campaign.stopped=Advertising stopped
+campaign.offline=Not connected; waiting
+campaign.no.messages=The message list is empty; add one with 'add <text>'
+campaign.no.targets=No eligible player for a private round; skipping this round
+
+# ---------- burst ----------
+burst.already=Burst is already running
+burst.needs.private=Burst only makes sense in private mode; switch with 'mode private'
+burst.needs.running=Start the main campaign first, then enable burst
+burst.started=Burst started: one line every {0}s for {1}s
+burst.stopped=Burst stopped
+
+# ---------- greeting ----------
+greeting.sent=Greeted {0}
+
+# ---------- status ----------
+status.header=-- EMLPga status ({0}) --
+status.campaign=campaign: {0}
+status.mode=mode: {0}
+status.interval=interval: round {0}s, gap {1}s, jitter +-{2}s
+status.round=round: {0}, target {1}, next line in {2}s
+status.waiting=waiting for the next round: {0}s
+status.note=note: {0}
+status.roster=online {0}, messageable {1}, blacklisted {2}
+status.burst=burst: {0} (every {1}s, {2}s per window)
+status.messages=messages: {0} main, {1} burst
+status.text=suffix {0}, math font {1}, greeting {2}
+status.running=running
+status.stopped=stopped
+status.paused=between windows
+status.on=on
+status.off=off
+
+# ---------- commands ----------
+cmd.description=Advertising control
+cmd.needs.epa=Unknown entry point '{0}'; the form is /promo <subcommand>
+cmd.unknown=Unknown subcommand: {0}
+cmd.help.title=usage: /promo <subcommand> [args]
+cmd.usage=usage: {0}
+cmd.number.range=the value must be at least {0}
+cmd.number.invalid=not a number: {0}
+cmd.toggle.invalid=expected on/off (also true/false, enable/disable): {0}
+
+# ---------- lifecycle ----------
+cmd.start.ok=started
+cmd.stop.ok=stopped
+cmd.forcestop.ok=force-stopped and set enabled=false
+cmd.reload.ok=config reloaded (language {0}, {1} entries)
+
+# ---------- message list ----------
+cmd.list.empty=The message list is empty
+cmd.list.header={0} message(s):
+cmd.list.duplicate=already present: {0}
+cmd.list.added=added #{0}: {1}
+cmd.list.removed=removed: {0}
+cmd.list.index=index out of range; there are {0} message(s)
+cmd.list.missing=not found: {0}
+cmd.list.updated=#{0} is now: {1}
+cmd.list.cleared=the message list was cleared
+
+# ---------- schedule ----------
+cmd.mode.ok=send mode set to {0}
+cmd.interval.ok={0} round interval set to {1}s
+cmd.gap.ok=gap between messages set to {0}s
+cmd.jitter.ok=jitter set to +-{0}s
+cmd.random.ok=one random message per round: {0}
+cmd.generic.ok={0} = {1}
+
+# ---------- greeting ----------
+cmd.greeting.ok=join greeting: {0}
+cmd.greeting.format.ok=greeting format set to: {0}
+
+# ---------- manual send ----------
+cmd.offline=not connected, nothing was sent
+cmd.say.ok=sent: {0}
+cmd.pm.ok=sent privately to {0}
+
+# ---------- players ----------
+cmd.players.empty=no other players online
+cmd.players.header=online {0}, messageable {1}:
+
+# ---------- blacklist ----------
+cmd.blacklist.empty=the blacklist is empty
+cmd.blacklist.header=blacklist: {0}
+cmd.blacklist.added=blacklisted: {0}
+cmd.blacklist.removed=removed from the blacklist: {0}
+cmd.blacklist.present=already blacklisted: {0}
+cmd.blacklist.missing=not on the blacklist: {0}
+
+# ---------- burst commands ----------
+cmd.burst.started=burst enabled
+cmd.burst.refused=burst could not start; see the log above
+cmd.burst.stopped=burst disabled
+cmd.burstlist.header={0} burst message(s):
+cmd.burstlist.added=added burst message #{0}: {1}
+
+# ---------- diagnostics ----------
+cmd.lang.ok=language {0}, {1} entries
+
+# ---------- subcommand summaries ----------
+summary.help=list every subcommand
+summary.status=state, progress and switches
+summary.start=start advertising on the configured schedule
+summary.stop=stop advertising
+summary.forcestop=stop and disable auto-start
+summary.reload=re-read config.yml and restart the campaign
+summary.list=list the messages
+summary.add=append a message
+summary.remove=delete by index or exact text
+summary.set=replace the message at an index
+summary.clear=empty the message list
+summary.mode=switch between public and private
+summary.interval=round interval for the active mode, in seconds
+summary.publicinterval=round interval in public mode, in seconds
+summary.privateinterval=round interval in private mode, in seconds
+summary.gap=gap between two messages of one round, in seconds
+summary.jitter=random spread on the round interval, in seconds
+summary.gapjitter=random spread on the gap, in seconds
+summary.random=send one random message per round
+summary.skiprepeats=skip a line identical to the previous one
+summary.suffix=append a short random suffix
+summary.suffixlen=length of that suffix
+summary.mathfont=render long digit runs as mathematical bold
+summary.mathmin=minimum run length that gets styled
+summary.greeting=greet players when they join
+summary.greetingformat=greeting template; #name# #bot# #players# are substituted
+summary.say=send one message publicly right now
+summary.pm=send one message privately to a player right now
+summary.players=list online and messageable players
+summary.blacklist=manage the private-message blacklist
+summary.burst=enable, disable or inspect the burst loop
+summary.burstlist=list the burst messages
+summary.burstadd=append a burst message
+summary.burstremove=delete a burst message by index or text
+summary.burstset=replace a burst message at an index
+summary.sync=mirror the main list into the burst list
+summary.burstinterval=delay between burst lines, in seconds
+summary.burstduration=length of one burst window, in seconds
+summary.lang=show the active language and entry count

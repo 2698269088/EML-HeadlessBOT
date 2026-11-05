@@ -136,10 +136,10 @@ public final class MinecraftLifecycle {
          try {
             self.runTick(true);
          } catch (ReportedException e) {
-            eml.hooks.BotRuntime.log().error("Reported exception thrown!", e);
+            eml.util.CrashReporter.report(Thread.currentThread(), e);
             self.running = false;
          } catch (Throwable t) {
-            eml.hooks.BotRuntime.log().error("Unreported exception thrown!", t);
+            eml.util.CrashReporter.report(Thread.currentThread(), t);
             self.running = false;
          }
 

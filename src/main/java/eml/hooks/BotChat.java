@@ -17,12 +17,22 @@ public final class BotChat {
     *         that only existed to feed the GUI)
     */
    public static boolean handle(final Minecraft client, final boolean fromServer, final String sender, final Component content) {
-      ChatMessageEvent event = BotPlugins.fire(new ChatMessageEvent(fromServer, sender, content));
+      return handle(client, fromServer, sender, content, fromServer ? ChatMessageEvent.Kind.SYSTEM : ChatMessageEvent.Kind.PUBLIC, null);
+   }
+
+   /**
+    * Same fan-out with the extra context a plugin needs to tell "who said this" apart from "how the console
+    * prefixes it": the vanilla path the line arrived on and, for signed/disguised player chat, the sender's
+    * name.
+    */
+   public static boolean handle(final Minecraft client, final boolean fromServer, final String sender, final Component content,
+                                final ChatMessageEvent.Kind kind, final String senderName) {
+      ChatMessageEvent event = BotPlugins.fire(new ChatMessageEvent(fromServer, sender, content, kind, senderName));
       if (event.isCancelled()) {
          return true;
       }
 
-      BotRuntime.onChatReceived(fromServer, sender, content);
+      BotRuntime.onChatReceived(fromServer, senderName == null || senderName.isBlank() ? sender : senderName, content);
       return false;
    }
 }

@@ -204,7 +204,6 @@ public final class EmlAgent {
 
             for (RuleEntry entry : entries) {
                entry.patch.apply(node);
-               entry.applied = true;
                needsFrames |= entry.patch.needsFrameRecomputation();
 
                // A StatementDrop that could not bound its statement (value stored/returned, try/catch range,
@@ -222,11 +221,17 @@ public final class EmlAgent {
                ? new eml.engine.EmlClassWriter(ClassWriter.COMPUTE_FRAMES, loader != null ? loader : ClassLoader.getSystemClassLoader())
                : new ClassWriter(0);
             node.accept(writer);
+            byte[] transformed = writer.toByteArray();
+            for (RuleEntry entry : entries) {
+               entry.applied = true;
+            }
+
             log("patched " + className + " (" + entries.size() + " rule(s)" + (needsFrames ? ", frames recomputed" : "") + ")");
-            return writer.toByteArray();
+            return transformed;
          } catch (Throwable t) {
-            // Never hand back half-applied bytes and never swallow: a missing method means the
-            // mappings moved, and a silent vanilla class would fail much later in confusing ways.
+            // Instrumentation may fall back to the vanilla class when a transformer throws, so make the
+            // actual failed rule visible instead of leaving only a later renderer NullPointerException.
+            LaunchLog.error("[eml-agent] headless patch failed for " + className, t);
             throw new IllegalStateException("headless patch failed for " + className + ": " + t.getMessage(), t);
          }
       }

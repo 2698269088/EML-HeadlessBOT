@@ -26,6 +26,8 @@ public abstract class Plugin {
    private BotApi api;
    private Config config;
    private PluginState state = PluginState.LOADED;
+   /** Set for built-in features that ship inside the bot: they have no jar, so no description either. */
+   private String builtinName;
 
    /** Internal wiring done by {@link PluginManager}; never call this from a plugin. */
    final void init(final PluginDescriptionFile description, final PluginClassLoader classLoader, final File dataFolder, final BotApi api) {
@@ -34,6 +36,19 @@ public abstract class Plugin {
       this.dataFolder = dataFolder;
       this.api = api;
       this.logger = org.slf4j.LoggerFactory.getLogger(description.getName());
+   }
+
+   /**
+    * Wires a built-in feature: the same fields the manager would set, minus the jar and its description, with
+    * the config file given explicitly so a built-in can keep its settings next to {@code bot.yml} instead of
+    * inside {@code plugins/}.
+    */
+   public final void attach(final String name, final File configFile, final BotApi api) {
+      this.builtinName = name;
+      this.dataFolder = configFile.getParentFile();
+      this.config = new Config(configFile);
+      this.api = api;
+      this.logger = org.slf4j.LoggerFactory.getLogger(name);
    }
 
    /** Called once right after the plugin has been instantiated, while it is only LOADED. */
@@ -65,7 +80,7 @@ public abstract class Plugin {
    }
 
    public final String getName() {
-      return this.description.getName();
+      return this.builtinName != null ? this.builtinName : this.description.getName();
    }
 
    public final PluginDescriptionFile getDescription() {

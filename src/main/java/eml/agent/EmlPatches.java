@@ -302,8 +302,8 @@ public final class EmlPatches {
     *   <li>{@code RecipeUnlockedEvent} - {@code ClientboundPlaceRecipePacket} no longer exists.
     *   <li>{@code PlayerJoinedEvent} - the update packet exposes its entries as a record whose profile
     *       accessor is not one I could confirm; a wrong guess would fire the event with the wrong player.
-    *   <li>{@code ContainerOpenedEvent}, {@code BookOpenEvent} - need the menu/book object that only the
-    *       vanilla body produces, and the owning field/getter names are unconfirmed.
+    *   <li>{@code BookOpenEvent} - needs the book object that only the vanilla body produces, and the
+    *       owning field/getter names are unconfirmed.
     *   <li>{@code MobEffect*Event} - the packet exposes effect parts but not the {@code MobEffectInstance}
     *       or the upgrade flag its event carries.
     *   <li>{@code SendChatEvent}, {@code SendCommandEvent} - sender side, fired from
@@ -320,6 +320,7 @@ public final class EmlPatches {
 
       out.add(new Wrap(PACKET_LISTENER, "handlePlayerCombatKill", null, "onCombatKill"));
       out.add(new Wrap(PACKET_LISTENER, "handlePongResponse", null, "onPongResponse"));
+      wrap(out, "setTitleText", "onTitleText", true);
 
       wrap(out, "handleAddEntity", "onAddEntity", true);
       wrap(out, "handleRemoveEntities", "onRemoveEntities", false);
@@ -332,6 +333,9 @@ public final class EmlPatches {
       wrap(out, "handleSetExperience", "onSetExperience", false);
       wrap(out, "handleSetHeldSlot", "onSetHeldSlot", false);
       wrap(out, "handleContainerClose", "onContainerClose", false);
+      wrap(out, "handleOpenScreen", "onOpenScreen", true);
+      wrap(out, "handleContainerContent", "onContainerSetContent", true);
+      wrap(out, "handleContainerSetSlot", "onContainerSetSlot", true);
       wrap(out, "handleUpdateRecipes", "onUpdateRecipes", false);
       wrap(out, "handleGameRuleValues", "onGameRuleValues", false);
       wrap(out, "handleBossUpdate", "onBossUpdate", false);

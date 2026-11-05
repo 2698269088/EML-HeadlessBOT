@@ -111,6 +111,28 @@ public final class BotWorld {
       return this.cache.size();
    }
 
+   /** True when that cell holds water; waterlogged blocks count, because vanilla's fluid state decides. */
+   public boolean isWater(final int x, final int y, final int z) {
+      return (this.flags(x, y, z) & WATER) != 0;
+   }
+
+   /** Ladder, vine, scaffolding: a body can hold on and move vertically. */
+   public boolean isClimbable(final int x, final int y, final int z) {
+      return (this.flags(x, y, z) & CLIMBABLE) != 0;
+   }
+
+   /** Lava, fire, cactus, cobweb, ...: never route through it. */
+   public boolean isHazard(final int x, final int y, final int z) {
+      return (this.flags(x, y, z) & HAZARD) != 0;
+   }
+
+   /** Feet and head free with a floor underneath: the cell a body can stand in. Unknown ground counts as no. */
+   public boolean isStandable(final int x, final int y, final int z) {
+      return (this.flags(x, y, z) & PASSABLE) != 0
+         && (this.flags(x, y + 1, z) & PASSABLE) != 0
+         && (this.flags(x, y - 1, z) & FLOOR) != 0;
+   }
+
    private Info info(final int x, final int y, final int z) {
       ClientLevel current = this.current();
       if (current == null) {
