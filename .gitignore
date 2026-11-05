@@ -65,5 +65,8 @@ bot.yml
 # Ignore Gradle build output directory
 build
 
+# ---- 本地快捷方式（含本机绝对路径，不入库）----
+*.lnk
+
 # Ignore Kotlin plugin data
 .kotlin
