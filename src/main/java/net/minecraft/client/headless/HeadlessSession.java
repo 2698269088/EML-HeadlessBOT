@@ -255,7 +255,7 @@ public final class HeadlessSession {
    private volatile boolean dialing;
 
    public void connect(final String host, final int port) {
-      // Persist the target so the next boot can connect automatically (see bot.yml).
+      // Persist the logical target so every reconnect performs a fresh SRV lookup.
       BotConfig config = BotConfig.instance();
       if (config != null) {
          config.updateConnection(this.username, host, port);
@@ -263,35 +263,48 @@ public final class HeadlessSession {
 
       // Recorded before the probe: a server that fails the ping must still be retried by autoReconnect.
       eml.hooks.BotRuntime.markConnectionIntent(host, port);
-
-      if (config != null && config.pingBeforeConnect()) {
-         if (this.dialing) {
-            this.io.print(BotLang.get("bot.dial_pending", host, port));
-            return;
-         }
-
-         this.dialing = true;
-         this.io.print(BotLang.get("bot.pinging", host, port));
-         Thread probe = new Thread(() -> {
-            ServerPinger.Result result = ServerPinger.ping(
-               host, port, net.minecraft.SharedConstants.getProtocolVersion(), config.pingTimeoutSeconds() * 1000
-            );
-            this.dialing = false;
-
-            if (result.online()) {
-               this.io.print(BotLang.get("bot.ping_ok", host, port, result.latencyMillis(),
-                  result.onlinePlayers(), result.maxPlayers(), result.version() == null ? "?" : result.version()));
-               this.connectNow(host, port);
-            } else {
-               this.io.printError(BotLang.get("bot.ping_failed", host, port, result.detail()));
-            }
-         }, "Server ping");
-         probe.setDaemon(true);
-         probe.start();
+      if (this.dialing) {
+         this.io.print(BotLang.get("bot.dial_pending", host, port));
          return;
       }
 
-      this.connectNow(host, port);
+      this.dialing = true;
+      boolean ping = config != null && config.pingBeforeConnect();
+      if (ping) {
+         this.io.print(BotLang.get("bot.pinging", host, port));
+      }
+
+      Thread connector = new Thread(() -> {
+         try {
+            SrvResolver.Resolved resolved = SrvResolver.resolve(host, port);
+            if (resolved.srv()) {
+               this.io.print(BotLang.get("bot.srv_resolved", host, port, resolved.host(), resolved.port()));
+            }
+
+            if (ping) {
+               ServerPinger.Result result = ServerPinger.ping(
+                  resolved.host(), resolved.port(), net.minecraft.SharedConstants.getProtocolVersion(),
+                  config.pingTimeoutSeconds() * 1000
+               );
+               if (!result.online()) {
+                  this.io.printError(BotLang.get("bot.ping_failed", host, port, result.detail()));
+                  return;
+               }
+
+               this.io.print(BotLang.get("bot.ping_ok", host, port, result.latencyMillis(),
+                  result.onlinePlayers(), result.maxPlayers(), result.version() == null ? "?" : result.version()));
+               eml.hooks.BotProtocol.noteResolved(host, port, result.protocolVersion());
+            }
+
+            this.connectNow(resolved.host(), resolved.port());
+         } catch (Exception error) {
+            this.io.printError(BotLang.get("bot.connect_failed", rootMessage(error)));
+         } finally {
+            this.dialing = false;
+         }
+      }, ping ? "Server ping" : "Server connect");
+      connector.setDaemon(true);
+      connector.start();
    }
 
    /** The dial itself: queues the work on the client thread, where the connection may be created. */

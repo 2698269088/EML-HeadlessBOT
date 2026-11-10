@@ -3,7 +3,7 @@
 # Everything here is also changeable at runtime with '/emlpga epa <sub>', which writes the same file, so
 # this is a starting point rather than the only way in.
 
-enabled: true
+enabled: false
 # zh_cn / en_us. Missing keys fall back to zh_cn, then to the key itself.
 language: zh_cn
 
@@ -54,14 +54,14 @@ burst:
 
 # The advertisement lines. #name# #players# #bot# #time# are substituted at send time.
 messages:
-  - "§e欢迎来到本服§r"
+  - "欢迎来到本服"
   - "本机器人由 EML-HeadlessBOT 驱动"
   - "有问题请在公屏提问，管理会尽快回复"
 
 # Independent list for the burst window; falls back to 'messages' when empty.
 burstMessages:
-  - "§a本服正在正常运行§r"
-  - "§7在线玩家: #players#§r"
+  - "本服正在正常运行"
+  - "在线玩家: #players#"
 
 # Players never messaged by private rounds.
 blacklist: []

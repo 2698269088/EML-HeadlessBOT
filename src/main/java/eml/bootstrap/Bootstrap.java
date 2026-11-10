@@ -219,6 +219,13 @@ public final class Bootstrap {
       // -Deml.jfrRepo / -Djdk.rc.repository.path still wins.
       command.add("-Djdk.rc.repository.path=" + jfrRepository(gameDirectory));
 
+      // Per-launch debug overrides have to survive the relaunch: the switches are read in the child (and by
+      // its agent, whose premain runs before any argument exists), where the launcher's properties are gone.
+      // Appended before the jvm: block so a line there still wins (the JVM resolves duplicates last-wins).
+      for (String key : eml.util.Debug.overrides(System.getProperties())) {
+         command.add("-D" + key + "=" + System.getProperty(key));
+      }
+
       // Heap and tuning: the jvm: block of bot.yml first, then -Deml.jvmArgs as the one-off override for a
       // single launch. Both come after the flags above for the same last-wins reason, and the effective list
       // is logged so "which -Xmx did this run get" never has to be guessed.

@@ -26,9 +26,9 @@ import java.nio.charset.StandardCharsets;
  */
 public final class ServerPinger {
    /** {@code online == false} carries the reason in {@code detail}; the other fields are then -1/null. */
-   public record Result(boolean online, long latencyMillis, int onlinePlayers, int maxPlayers, String version, String detail) {
+   public record Result(boolean online, long latencyMillis, int onlinePlayers, int maxPlayers, String version, int protocolVersion, String detail) {
       static Result offline(final String detail) {
-         return new Result(false, -1L, -1, -1, null, detail);
+         return new Result(false, -1L, -1, -1, null, -1, detail);
       }
    }
 
@@ -110,12 +110,14 @@ public final class ServerPinger {
          }
 
          String version = "?";
+         int protocol = -1;
          if (root.has("version") && root.get("version").isJsonObject()) {
             JsonObject info = root.getAsJsonObject("version");
             version = info.has("name") ? info.get("name").getAsString() : "?";
+            protocol = info.has("protocol") ? info.get("protocol").getAsInt() : -1;
          }
 
-         return new Result(true, latency, online, max, version, "ok");
+         return new Result(true, latency, online, max, version, protocol, "ok");
       } catch (RuntimeException e) {
          return Result.offline("unreadable status json: " + e.getMessage());
       }

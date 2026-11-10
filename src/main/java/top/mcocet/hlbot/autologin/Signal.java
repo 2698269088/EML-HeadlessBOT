@@ -14,7 +14,9 @@ public final class Signal {
       SERVER_CHANGE,
       DISCONNECT,
       WINDOW_OPEN,
-      WINDOW_SLOT
+      WINDOW_SLOT,
+      DIALOG_OPEN,
+      DIALOG_CLOSE
    }
 
    private final Type type;

@@ -84,8 +84,37 @@ final class ActionExecutor {
                debugLog(debug, "action -> containerClick: slot={}, button={}, result={}", slot, button, clicked);
             });
          }
+         case DIALOG_INPUT -> {
+            String key = action.argString("key", "");
+            String value = interpolate(action.value(), vars);
+            runDialogAction(() -> {
+               this.api.dialogs().setInput(key, value);
+               debugLog(debug, "action -> dialogInput: {}", key);
+            });
+         }
+         case DIALOG_CLICK -> {
+            String target = interpolate(action.value(), vars);
+            runDialogAction(() -> {
+               this.api.dialogs().click(target);
+               debugLog(debug, "action -> dialogClick: {}", target);
+            });
+         }
+         case DIALOG_CANCEL -> runDialogAction(() -> {
+            boolean cancelled = this.api.dialogs().cancel();
+            debugLog(debug, "action -> dialogCancel: {}", cancelled);
+         });
          case NONE -> debugLog(debug, "action -> no-op (missing or unknown action)");
       }
+   }
+
+   private void runDialogAction(final Runnable action) {
+      this.api.runOnClient(() -> {
+         try {
+            action.run();
+         } catch (RuntimeException failed) {
+            LOGGER.error("[AutoLogin] dialog action failed", failed);
+         }
+      });
    }
 
    private static void debugLog(final boolean debug, final String format, final Object... args) {

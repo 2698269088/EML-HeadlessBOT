@@ -51,6 +51,11 @@ public final class JLineLogAppender extends AbstractAppender {
 
    public static void setLineReader(final LineReader reader) {
       lineReader = reader;
+      if (reader == null) {
+         BotStatusBar.close();
+      } else {
+         BotStatusBar.install(reader);
+      }
    }
 
    protected JLineLogAppender(final String name, final Filter filter, final Layout<? extends Serializable> layout) {

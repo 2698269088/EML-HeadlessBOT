@@ -99,6 +99,25 @@ public final class RuleListener implements Listener {
       }
    }
 
+   @EventHandler(priority = EventPriority.MONITOR)
+   public void onDialogOpened(final top.mcocet.hlbot.plugins.events.dialog.DialogOpenedEvent event) {
+      try {
+         this.autoLogin.selectConnectionTarget();
+         this.engine.handle(new Signal(Signal.Type.DIALOG_OPEN, event.getSnapshot().title(), "dialog", false));
+      } catch (RuntimeException ignored) {
+         // Dialog rules must never break packet handling.
+      }
+   }
+
+   @EventHandler(priority = EventPriority.MONITOR)
+   public void onDialogClosed(final top.mcocet.hlbot.plugins.events.dialog.DialogClosedEvent event) {
+      try {
+         this.engine.handle(new Signal(Signal.Type.DIALOG_CLOSE, event.getSnapshot().title(), "dialog", false));
+      } catch (RuntimeException ignored) {
+         // Dialog rules must never break packet handling.
+      }
+   }
+
    private static String strip(final String text) {
       return text == null ? "" : COLOR_CODE.matcher(text).replaceAll("");
    }

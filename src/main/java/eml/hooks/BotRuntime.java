@@ -40,6 +40,27 @@ public final class BotRuntime {
       return ALWAYS_TRUE;
    }
 
+   /**
+    * Called from the patched {@code Minecraft.runTick} with the level's own running state.
+    *
+    * <p>When it goes false the level stops ticking: player physics do not advance, {@code onGround} keeps
+    * its last value and every {@code goto} refuses with "not on the ground" - while console commands keep
+    * working, because the task queue is pumped outside the tick burst. Logging the transition once turns
+    * that confusing state into a single line naming the cause.
+    */
+   public static void tickClock(final boolean runningNormally, final boolean tickRateFrozen) {
+      if (runningNormally) {
+         frozenClockReported = false;
+         return;
+      }
+
+      if (!frozenClockReported) {
+         frozenClockReported = true;
+         LOGGER.warn("[bot] the level tick clock is frozen (tickRateManager frozen={}); "
+            + "player physics and entity ticks stop until it resumes", tickRateFrozen);
+      }
+   }
+
    // ---- tick pacer ----
    private static long nextTickNanos;
    private static long tickCount;
@@ -67,6 +88,12 @@ public final class BotRuntime {
    // ---- console output sink ----
    private static final Deque<ReceivedLine> HISTORY = new ArrayDeque<>();
    private static volatile Consumer<ReceivedLine> sink;
+
+   // ---- tick clock diagnostics ----
+   // "The world stopped moving but the console still reacts" is a frozen tick clock, not broken physics:
+   // runTick still pumps the task queue every iteration, so commands answer while nothing in the level
+   // advances. Reported once per freeze so the next log says why instead of leaving it to be inferred.
+   private static boolean frozenClockReported;
 
    private BotRuntime() {
    }
@@ -145,6 +172,7 @@ public final class BotRuntime {
       var snapshot = localPlayer == null ? null : eml.action.BotPlayer.of(localPlayer);
       top.mcocet.hlbot.nav.Navigator.INSTANCE.tick(snapshot, client.getConnection() != null);
       top.mcocet.hlbot.superpearl.SuperPearl.INSTANCE.tick(snapshot);
+      net.minecraft.client.headless.BotStatusBar.tick(client);
       autoReconnect(client);
       pingProbe(client);
       heartbeat(client);
@@ -185,6 +213,7 @@ public final class BotRuntime {
       } else {
          // A pack id is per connection; a reconnect must answer packs afresh.
          BotResourcePacks.clear();
+         eml.action.BotDialogs.INSTANCE.close("disconnect");
          top.mcocet.hlbot.plugins.BotPlugins.fire(new top.mcocet.hlbot.plugins.events.connection.DisconnectEvent(
             lastDropReason == null ? Component.literal("Connection closed") : lastDropReason));
          top.mcocet.hlbot.plugins.BotPlugins.onServerDisconnected();
@@ -217,6 +246,8 @@ public final class BotRuntime {
    // state machine then retries on the schedule from bot.yml.
 
    private static volatile boolean wantsConnection;
+   /** True from a deliberate disconnect/shutdown until the next connect; normal teardown needs no diagnostics. */
+   private static volatile boolean userDisconnect;
    private static volatile boolean announcedDrop;
    private static volatile String targetHost = "";
    private static volatile int targetPort = 25565;
@@ -230,6 +261,7 @@ public final class BotRuntime {
       targetHost = host;
       targetPort = port;
       wantsConnection = true;
+      userDisconnect = false;
       announcedDrop = false;
       reconnectCountdown = -1;
    }
@@ -237,9 +269,15 @@ public final class BotRuntime {
    /** A deliberate 'disconnect' or shutdown: retries stop until the next explicit connect. */
    public static void markUserDisconnect() {
       wantsConnection = false;
+      userDisconnect = true;
       announcedDrop = false;
       reconnectCountdown = -1;
       reconnectAttempts = 0;
+   }
+
+   /** True while a deliberate disconnect or shutdown is in progress; BotDebug stays quiet for it. */
+   public static boolean userDisconnectRequested() {
+      return userDisconnect;
    }
 
    public static void setReconnectHandler(final Runnable handler) {

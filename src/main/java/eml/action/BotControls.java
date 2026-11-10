@@ -262,6 +262,27 @@ public final class BotControls {
       return true;
    }
 
+   /** Selects any player-inventory slot (0-35), swapping backpack items into the current hotbar slot. */
+   public boolean selectInventorySlot(final int inventoryIndex) {
+      LocalPlayer player = this.player();
+      if (player == null || inventoryIndex < 0 || inventoryIndex > 35) {
+         return false;
+      }
+
+      int hotbar = inventoryIndex < 9 ? inventoryIndex : player.getInventory().getSelectedSlot();
+      if (inventoryIndex >= 9 && !this.swapIntoHotbar(inventoryIndex, hotbar)) {
+         return false;
+      }
+
+      this.selectSlot(hotbar);
+      Minecraft client = this.clients.get();
+      if (client != null && client.getConnection() != null) {
+         client.getConnection().send(new net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket(hotbar));
+      }
+
+      return true;
+   }
+
    /**
     * Places one block into (x, y, z) by clicking the given face of a neighbouring support block. The caller
     * supplies where and against what; this method only picks the item, aims the packet and reports whether

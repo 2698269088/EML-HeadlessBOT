@@ -10,6 +10,9 @@ import java.util.Map;
 import eml.action.BotControls;
 import eml.action.BotPlayer;
 import eml.action.BotWorld;
+import top.mcocet.hlbot.nav.neural.NavBrain;
+import top.mcocet.hlbot.nav.neural.NavExperience;
+import top.mcocet.hlbot.nav.neural.NavModelTrainer;
 
 /**
  * The bot's walker, swimmer, glider and driver: plans with {@link Pathfinder}, then presses the vanilla input
@@ -28,6 +31,13 @@ import eml.action.BotWorld;
  *       dive onto the target. A directed glide, not terrain-aware flight planning.</li>
  *   <li>{@link Mode#RIDE} - get on the nearest boat, minecart or horse and drive to a point, then dismount.</li>
  * </ul>
+ *
+ * <p>Optionally ({@code navigation.neural} in bot.yml, or {@code goto neural on}), each (re-)plan first asks a
+ * tiny bundled network ({@link top.mcocet.hlbot.nav.neural.NavBrain}) how the next leg should be travelled:
+ * walking (default, wider or dig-friendly search), swimming, flying, riding, tunnelling or stopping. Its
+ * inputs include the road ahead - a corridor sampled toward the target - plus the terrain around the body and
+ * the means available (elytra, a nearby vehicle). The network only chooses among the existing modes and
+ * options; it never drives the keys itself.
  *
  * <h2>Threading</h2>
  *
@@ -149,6 +159,39 @@ public final class Navigator {
 
    /** Smart mode: pick the means by distance first, instead of only escalating when the walk fails. */
    private boolean smart;
+
+   /**
+    * The operator's standing preference, set with {@code goto mode}: AUTO is the old behaviour, FLY takes
+    * the elytra whenever there is one, DIG insists on breaking/placing through obstacles, MOVE never
+    * escalates away from walking/swimming, RIDE takes a vehicle whenever one is nearby.
+    */
+   public enum Preference {
+      AUTO,
+      FLY,
+      DIG,
+      MOVE,
+      RIDE
+   }
+
+   private volatile Preference preference = Preference.AUTO;
+
+   /** Neural planning strategy: off unless bot.yml's navigation.neural or `goto neural on` enables it. */
+   private volatile boolean neural;
+   /** Persists a `goto neural on|off` toggle; wired by the application, which owns bot.yml. */
+   private java.util.function.Consumer<Boolean> neuralPersist;
+   /** Experience recording for `goto neural train` (navigation.record), off by default. */
+   private volatile boolean record;
+   private java.util.function.Consumer<Boolean> recordPersist;
+   private java.io.File customModelFile;
+   private java.io.File experienceFile;
+   private NavExperience experience;
+   /** Identifies the current trip in the experience log; decisions and the outcome share it. */
+   private long tripId;
+   private boolean tripRecorded;
+   private volatile NavBrain brain;
+   private volatile boolean brainTried;
+   /** Consecutive failed plans in this trip; a feature of the brain, and reset by any successful plan. */
+   private int planFailures;
    private RidePhase ridePhase = RidePhase.APPROACH;
    private int mountTicks;
    private int dismountTicks;
@@ -163,6 +206,35 @@ public final class Navigator {
       this.world = world;
       this.controls = controls;
       this.output = output;
+   }
+
+   /**
+    * Wires the neural planning switch: the initial values come from bot.yml ({@code navigation.neural} and
+    * {@code navigation.record}), and the persist callbacks write back the corresponding {@code goto neural}
+    * toggles. The model itself is loaded lazily on the first neurally-planned leg, so a bot that never
+    * enables it pays nothing. {@code customModelFile} is where {@code goto neural train} writes the model
+    * it produces; {@code experienceFile} is the log that training reads.
+    */
+   public void installNeural(final boolean enabled, final java.util.function.Consumer<Boolean> persist,
+                             final boolean record, final java.util.function.Consumer<Boolean> recordPersist,
+                             final java.io.File customModelFile, final java.io.File experienceFile) {
+      this.neural = enabled;
+      this.neuralPersist = persist;
+      this.record = record;
+      this.recordPersist = recordPersist;
+      this.customModelFile = customModelFile;
+      this.experienceFile = experienceFile;
+
+      try {
+         this.experience = new NavExperience(experienceFile);
+      } catch (java.io.IOException e) {
+         this.experience = null;
+      }
+   }
+
+   /** Whether the neural planning strategy is currently enabled. */
+   public boolean neuralEnabled() {
+      return this.neural;
    }
 
    // ==================== requests (any thread) ====================
@@ -340,6 +412,16 @@ public final class Navigator {
          return;
       }
 
+      if ("neural".equals(first) || "nn".equals(first)) {
+         this.neuralCommand(tokens);
+         return;
+      }
+
+      if ("mode".equals(first)) {
+         this.modeCommand(tokens);
+         return;
+      }
+
       if ("help".equals(first) || "?".equals(first)) {
          for (String key : GotoCommand.HELP_KEYS) {
             this.output.line(key);
@@ -425,6 +507,431 @@ public final class Navigator {
       }
    }
 
+   /** {@code goto neural [on|off]}: inspect or toggle the neural planning strategy, persisting the choice. */
+   private void neuralCommand(final String[] tokens) {
+      if (tokens.length == 1) {
+         this.output.line("nav.neural_status", this.neural ? "on" : "off", this.brain() == null ? "missing" : "loaded");
+         return;
+      }
+
+      String argument = tokens[1].toLowerCase(Locale.ROOT);
+
+      if ("record".equals(argument)) {
+         this.recordCommand(tokens);
+         return;
+      }
+
+      if ("train".equals(argument)) {
+         this.startTraining();
+         return;
+      }
+
+      boolean enable = "on".equals(argument) || "true".equals(argument);
+
+      if (!enable && !"off".equals(argument) && !"false".equals(argument)) {
+         this.output.error("bot.usage", GotoCommand.FULL_USAGE);
+         return;
+      }
+
+      this.neural = enable;
+
+      if (this.neuralPersist != null) {
+         this.neuralPersist.accept(enable);
+      }
+
+      this.output.line(enable ? "nav.neural_on" : "nav.neural_off");
+   }
+
+   /** {@code goto mode [auto|fly|dig|move|ride]}: inspect or set the standing travel preference. */
+   private void modeCommand(final String[] tokens) {
+      if (tokens.length == 1) {
+         this.output.line("nav.mode_status", this.preference.name().toLowerCase(Locale.ROOT));
+         return;
+      }
+
+      String argument = tokens[1].toLowerCase(Locale.ROOT);
+      Preference parsed;
+
+      try {
+         parsed = Preference.valueOf(argument.toUpperCase(Locale.ROOT));
+      } catch (IllegalArgumentException unknown) {
+         this.output.error("bot.usage", GotoCommand.FULL_USAGE);
+         return;
+      }
+
+      this.preference = parsed;
+      this.output.line("nav.mode_set", parsed.name().toLowerCase(Locale.ROOT));
+   }
+
+   /** {@code goto neural record [on|off]}: inspect or toggle experience recording, persisting the choice. */
+   private void recordCommand(final String[] tokens) {
+      if (tokens.length == 2) {
+         this.output.line("nav.record_status", this.record ? "on" : "off");
+         return;
+      }
+
+      String argument = tokens[2].toLowerCase(Locale.ROOT);
+      boolean enable = "on".equals(argument) || "true".equals(argument);
+
+      if (!enable && !"off".equals(argument) && !"false".equals(argument)) {
+         this.output.error("bot.usage", GotoCommand.FULL_USAGE);
+         return;
+      }
+
+      this.record = enable;
+
+      if (this.recordPersist != null) {
+         this.recordPersist.accept(enable);
+      }
+
+      this.output.line(enable ? "nav.record_on" : "nav.record_off");
+   }
+
+   /**
+    * {@code goto neural train}: trains a new model from the recorded experience on a worker thread (the
+    * command itself runs on the client thread, which must not stall for seconds), then hot-swaps it in.
+    * The bundled model stays untouched; deleting the custom file rolls back to it.
+    */
+   private void startTraining() {
+      if (this.experienceFile == null || this.customModelFile == null) {
+         this.output.error("nav.train_failed", "experience is not wired");
+         return;
+      }
+
+      if (!this.experienceFile.isFile()) {
+         this.output.error("nav.train_failed", "no experience yet - enable it with 'goto neural record on' and navigate");
+         return;
+      }
+
+      this.output.line("nav.train_started");
+      java.io.File experience = this.experienceFile;
+      java.io.File model = this.customModelFile;
+
+      Thread worker = new Thread(() -> {
+         try {
+            NavModelTrainer.TrainReport report = NavModelTrainer.trainFromExperience(experience.toPath(), model.toPath());
+            // Hot-swap: the next neuralDecision reloads, now preferring the freshly trained file.
+            this.brain = null;
+            this.brainTried = false;
+            this.output.line("nav.train_done", report.samples(),
+               String.format(Locale.ROOT, "%.3f", report.trainAccuracy()),
+               String.format(Locale.ROOT, "%.3f", report.devAccuracy()), model.getName());
+         } catch (Exception e) {
+            this.output.error("nav.train_failed", String.valueOf(e.getMessage()));
+         }
+      }, "Nav model training");
+      worker.setDaemon(true);
+      worker.start();
+   }
+
+   /** The active brain (custom model first, bundled as fallback), loaded once; missing means NORMAL. */
+   private NavBrain brain() {
+      if (!this.brainTried) {
+         this.brainTried = true;
+         this.brain = NavBrain.load(this.customModelFile);
+
+         if (this.brain == null && this.output != null) {
+            this.output.error("nav.neural_missing");
+         }
+      }
+
+      return this.brain;
+   }
+
+   /**
+    * The brain's strategy for the next plan. Distances are measured to the REAL target, not to the cut-off
+    * goal of this leg: a long trip is exactly the case where each leg looks short, and "wide" would never
+    * fire if the features described only the leg.
+    */
+   private NavBrain.Decision neuralDecision(final BotPlayer player, final String stage) {
+      NavBrain brain = this.brain();
+
+      if (brain == null) {
+         return NavBrain.Decision.NORMAL;
+      }
+
+      NavBrain.Situation situation = this.situation(player);
+      NavBrain.Decision decision = brain.decide(situation);
+
+      // Only recorded while navigation.record is on: the exact feature vector plus the decision, tied to the
+      // trip id so the outcome line written at the end can be joined back to it by the trainer.
+      this.recordDecision(stage, decision.name().toLowerCase(Locale.ROOT), situation);
+      return decision;
+   }
+
+   /** The observations every decision (neural, or a rule-based one being logged) is made from. */
+   private NavBrain.Situation situation(final BotPlayer player) {
+      double[] terrain = this.sampleTerrain(player);
+      double[] corridor = this.sampleCorridor(player);
+      return new NavBrain.Situation(
+         Math.hypot(this.targetX - player.blockX(), this.targetZ - player.blockZ()),
+         Math.abs(this.targetY - player.blockY()),
+         !this.world.isChunkLoaded(this.targetX, this.targetZ),
+         this.replans,
+         terrain[0],
+         terrain[1],
+         terrain[2],
+         this.planFailures,
+         this.options.allowDig(),
+         this.path.size(),
+         player.elytraEquipped(),
+         this.controls.hasVehicleNearby(MOUNT_RADIUS),
+         corridor[0],
+         corridor[1],
+         corridor[2]
+      );
+   }
+
+   /** Logs one decision with its features, while navigation.record is on. */
+   private void recordDecision(final String stage, final String label, final NavBrain.Situation situation) {
+      if (!this.record || this.experience == null) {
+         return;
+      }
+
+      this.experience.decision(this.tripId, stage, label, NavBrain.features(situation));
+      this.tripRecorded = true;
+   }
+
+   /**
+    * Rule-based decisions are logged too when the brain is off, so 'record' works on its own; with the brain
+    * on, neuralDecision already logged them.
+    */
+   private void recordRuleDecision(final BotPlayer player, final String stage, final String label) {
+      if (!this.neural) {
+         this.recordDecision(stage, label, this.situation(player));
+      }
+   }
+
+   /**
+    * The road ahead: a three-wide corridor toward the real target, sampled every two blocks up to 24 out.
+    * Returns {standable, water, hazard} fractions, or a neutral answer when nothing there is loaded. This is
+    * what lets the brain tell a river crossing apart from a dry plain before committing to a means of travel.
+    */
+   private double[] sampleCorridor(final BotPlayer player) {
+      double dx = this.targetX - player.x();
+      double dz = this.targetZ - player.z();
+      double length = Math.hypot(dx, dz);
+
+      if (length < 2.0) {
+         return new double[]{0.5, 0.0, 0.0};
+      }
+
+      double ux = dx / length;
+      double uz = dz / length;
+      int total = 0;
+      int open = 0;
+      int water = 0;
+      int hazard = 0;
+
+      for (int step = 2; step <= 24; step += 2) {
+         for (int off = -1; off <= 1; off++) {
+            int x = (int) Math.floor(player.x() + ux * step - uz * off);
+            int z = (int) Math.floor(player.z() + uz * step + ux * off);
+
+            if (!this.world.isChunkLoaded(x, z)) {
+               continue;
+            }
+
+            for (int dy = -1; dy <= 1; dy++) {
+               int y = player.blockY() + dy;
+               total++;
+
+               if (Pathfinder.standable(this.world, x, y, z)) {
+                  open++;
+               }
+               if (this.world.isWater(x, y, z)) {
+                  water++;
+               }
+               if (this.world.isHazard(x, y, z)) {
+                  hazard++;
+               }
+            }
+         }
+      }
+
+      if (total == 0) {
+         return new double[]{0.5, 0.0, 0.0};
+      }
+
+      return new double[]{(double) open / total, (double) water / total, (double) hazard / total};
+   }
+
+   /** The brain's choice applied: options to plan with, a tunnel shortcut, or null when the trip switched mode or stopped. */
+   private record NeuralChoice(Pathfinder.Options options, boolean tunnel) {
+   }
+
+   /**
+    * One neural decision, executed against the existing modes: FLY/RIDE hand the trip to the elytra or the
+    * vehicle code (only when the means actually exists, otherwise the walk proceeds), SWIM keeps the walk
+    * but commits to water, WIDE/DIG adjust the search, TUNNEL skips it, STOP ends the trip.
+    */
+   private NeuralChoice neuralChoice(final BotPlayer player) {
+      NavBrain.Decision decision = this.neuralDecision(player, "plan");
+
+      switch (decision) {
+         case STOP -> {
+            this.stop("nav.neural_stop");
+            return null;
+         }
+         case FLY -> {
+            if (this.preference != Preference.MOVE && this.preference != Preference.DIG && player.elytraEquipped()) {
+               this.beginFly(player, this.targetX, this.targetY, this.targetZ);
+               return null;
+            }
+         }
+         case RIDE -> {
+            if (this.preference != Preference.MOVE && this.preference != Preference.DIG && this.controls.hasVehicleNearby(MOUNT_RADIUS)) {
+               this.beginRide(player, this.targetX, this.targetY, this.targetZ);
+               return null;
+            }
+         }
+         case WIDE -> {
+            return new NeuralChoice(wideOptions(this.options), false);
+         }
+         case DIG -> {
+            return new NeuralChoice(digOptions(this.options), false);
+         }
+         case SWIM -> {
+            return new NeuralChoice(swimOptions(this.options), false);
+         }
+         case TUNNEL -> {
+            if (this.options.allowDig()) {
+               return new NeuralChoice(this.options, true);
+            }
+         }
+         default -> {
+            // NORMAL, or a means of travel that is not actually available: walk with the requested options.
+         }
+      }
+
+      return new NeuralChoice(this.preference == Preference.DIG ? digOptions(this.options) : this.options, false);
+   }
+
+   /** {openness, hazardRatio, waterRatio} over the 17x5x17 neighbourhood, read from the terrain cache. */
+   private double[] sampleTerrain(final BotPlayer player) {
+      int total = 0;
+      int open = 0;
+      int hazard = 0;
+      int water = 0;
+
+      for (int dx = -8; dx <= 8; dx++) {
+         for (int dz = -8; dz <= 8; dz++) {
+            int x = player.blockX() + dx;
+            int z = player.blockZ() + dz;
+
+            if (!this.world.isChunkLoaded(x, z)) {
+               continue;
+            }
+
+            for (int dy = -2; dy <= 2; dy++) {
+               int y = player.blockY() + dy;
+               total++;
+
+               if (Pathfinder.standable(this.world, x, y, z)) {
+                  open++;
+               }
+               if (this.world.isHazard(x, y, z)) {
+                  hazard++;
+               }
+               if (this.world.isWater(x, y, z)) {
+                  water++;
+               }
+            }
+         }
+      }
+
+      if (total == 0) {
+         return new double[]{0.5, 0.0, 0.0};
+      }
+
+      return new double[]{(double) open / total, (double) hazard / total, (double) water / total};
+   }
+
+   /** A wider, more patient search for long open ground: fewer, longer legs per trip. */
+   private static Pathfinder.Options wideOptions(final Pathfinder.Options base) {
+      return new Pathfinder.Options(base.maxNodes() * 4, base.maxDrop(), base.maxWaterFall(), base.maxDigTicks(),
+         base.allowDig(), base.allowSwim(), base.allowClimb(), base.maxRadius() * 2, base.maxRise());
+   }
+
+   /** Digging with more patience: slower blocks become worth mining when the terrain is broken. */
+   private static Pathfinder.Options digOptions(final Pathfinder.Options base) {
+      return new Pathfinder.Options(base.maxNodes(), base.maxDrop(), base.maxWaterFall(), base.maxDigTicks() * 2,
+         base.allowDig(), base.allowSwim(), base.allowClimb(), base.maxRadius(), base.maxRise());
+   }
+
+   /** Committing to water: swimming stays on, and a deeper drop is acceptable when it lands in water. */
+   private static Pathfinder.Options swimOptions(final Pathfinder.Options base) {
+      return new Pathfinder.Options(base.maxNodes(), base.maxDrop(), Math.max(base.maxWaterFall(), 48),
+         base.maxDigTicks(), base.allowDig(), true, base.allowClimb(), base.maxRadius(), base.maxRise());
+   }
+
+   /**
+    * The last word before "no route from here any more": with the neural planner on, a failed leg is not
+    * abandoned until the brain has decided once more, this time with the failure in its features. It may
+    * switch means (elytra, a vehicle) or retry the grid with different options (wide / dig / swim). A rescue
+    * search that also fails is not rescued again, and NORMAL/TUNNEL/STOP mean there is nothing new to try.
+    */
+   private boolean neuralRescue(final BotPlayer player) {
+      if (!this.neural || this.brain() == null) {
+         return false;
+      }
+
+      NavBrain.Decision decision = this.neuralDecision(player, "rescue");
+
+      switch (decision) {
+         case FLY -> {
+            if (player.elytraEquipped()) {
+               this.output.line("nav.neural_rescue", "fly", "-");
+               this.beginFly(player, this.targetX, this.targetY, this.targetZ);
+               return true;
+            }
+         }
+         case RIDE -> {
+            if (this.controls.hasVehicleNearby(MOUNT_RADIUS)) {
+               this.output.line("nav.neural_rescue", "ride", "-");
+               this.beginRide(player, this.targetX, this.targetY, this.targetZ);
+               return true;
+            }
+         }
+         case WIDE, DIG, SWIM -> {
+            Pathfinder.Options options = switch (decision) {
+               case WIDE -> wideOptions(this.options);
+               case DIG -> digOptions(this.options);
+               default -> swimOptions(this.options);
+            };
+            int[] goal = this.reachableGoal(player);
+            Pathfinder.Result result = Pathfinder.find(
+               this.world,
+               player.blockX(), player.blockY(), player.blockZ(),
+               goal[0], goal[1], goal[2],
+               options,
+               this.penalty,
+               (world, x, y, z) -> this.controls.digTicks(x, y, z)
+            );
+
+            if (result.found()) {
+               this.path = result.steps();
+               this.index = 0;
+               this.waypointTicks = 0;
+               this.stuck = 0;
+               this.escalation = 0;
+               this.planFailures = 0;
+               // The rescue starts a fresh failure budget: it is a new approach, not more of the same one.
+               this.replans = 0;
+               this.detail = "neural";
+               this.mode = Mode.WALK;
+               this.output.line("nav.neural_rescue", decision.name().toLowerCase(Locale.ROOT), this.path.size());
+               return true;
+            }
+         }
+         default -> {
+            // Nothing new to try.
+         }
+      }
+
+      return false;
+   }
+
    // ==================== starting a trip ====================
 
    private void beginWalk(final BotPlayer player, final int x, final int y0, final int z, final boolean dig) {
@@ -467,6 +974,18 @@ public final class Navigator {
          return;
       }
 
+      // Standing preference first: FLY/RIDE jump straight to their mode when the means exists, DIG forces
+      // digging (and with it block placement), MOVE suppresses every escalation below.
+      if (this.preference == Preference.FLY && player.elytraEquipped()) {
+         this.beginFly(player, x, y, z);
+         return;
+      }
+
+      if (this.preference == Preference.RIDE && this.controls.hasVehicleNearby(MOUNT_RADIUS)) {
+         this.beginRide(player, x, y, z);
+         return;
+      }
+
       // Smart mode chooses the means by distance up front, rather than waiting for the walk to fail: the
       // elytra for a long trip, a vehicle for a medium one, walking otherwise. Each still falls back to the
       // next when it cannot start (no elytra, nothing to ride).
@@ -484,7 +1003,13 @@ public final class Navigator {
          }
       }
 
-      this.options = this.walkOptions(dig);
+      this.options = this.walkOptions(dig || this.preference == Preference.DIG);
+
+      if (this.preference == Preference.DIG) {
+         // Dig-first: slower blocks are worth mining, and the follower may place blocks to bridge gaps.
+         this.options = digOptions(this.options);
+      }
+
       this.targetX = x;
       this.targetY = y;
       this.targetZ = z;
@@ -582,6 +1107,9 @@ public final class Navigator {
    }
 
    private void resetForTrip() {
+      // Switching means (a failed walk escalating to fly/ride) ends the previous trip too: write its outcome
+      // before the new id is issued, or its decisions would sit in the log with no outcome at all.
+      this.recordOutcome("switched");
       this.controls.cancelBreak();
       this.controls.releaseAll();
       this.startedAt = System.currentTimeMillis();
@@ -592,11 +1120,14 @@ public final class Navigator {
       this.stuck = 0;
       this.escalation = 0;
       this.replans = 0;
+      this.planFailures = 0;
       this.waitingTicks = 0;
       this.mountTicks = 0;
       this.dismountTicks = 0;
       this.penalty.clear();
       this.detail = "";
+      this.tripId++;
+      this.tripRecorded = false;
    }
 
    // ==================== walk ====================
@@ -868,26 +1399,46 @@ public final class Navigator {
       this.world.clear();
 
       int[] goal = this.reachableGoal(player);
-      Pathfinder.Result result = Pathfinder.find(
+      Pathfinder.Options options = this.options;
+      // TUNNEL skips the search entirely and lands in the same straight-tunnel fallback a failed A* uses.
+      boolean skipSearch = false;
+
+      if (this.neural) {
+         NeuralChoice choice = this.neuralChoice(player);
+
+         if (choice == null) {
+            return;
+         }
+
+         options = choice.options();
+         skipSearch = choice.tunnel();
+      }
+
+      Pathfinder.Result result = skipSearch ? null : Pathfinder.find(
          this.world,
          player.blockX(), player.blockY(), player.blockZ(),
          goal[0], goal[1], goal[2],
-         this.options,
+         options,
          this.penalty,
          (world, x, y, z) -> this.controls.digTicks(x, y, z)
       );
 
-      if (!result.found()) {
+      if (result == null || !result.found()) {
+         this.planFailures++;
          // Smart escalation: use whatever else can still get there, in order - elytra, vehicle, then the
-         // straight tunnel. The bot and its surroundings are all resources, not just the grid route.
-         if (player.elytraEquipped() && Math.abs(this.targetY - player.blockY()) + Math.abs(this.targetX - player.blockX()) > 32) {
-            this.beginFly(player, this.targetX, this.targetY, this.targetZ);
-            return;
-         }
+         // straight tunnel. MOVE never leaves the ground, DIG goes straight to the tunnel.
+         if (this.preference != Preference.MOVE && this.preference != Preference.DIG) {
+            if (player.elytraEquipped() && Math.abs(this.targetY - player.blockY()) + Math.abs(this.targetX - player.blockX()) > 32) {
+               this.recordRuleDecision(player, "plan", "fly");
+               this.beginFly(player, this.targetX, this.targetY, this.targetZ);
+               return;
+            }
 
-         if (this.controls.hasVehicleNearby(MOUNT_RADIUS) && Math.abs(this.targetX - player.blockX()) + Math.abs(this.targetZ - player.blockZ()) > 24) {
-            this.beginRide(player, this.targetX, this.targetY, this.targetZ);
-            return;
+            if (this.controls.hasVehicleNearby(MOUNT_RADIUS) && Math.abs(this.targetX - player.blockX()) + Math.abs(this.targetZ - player.blockZ()) > 24) {
+               this.recordRuleDecision(player, "plan", "ride");
+               this.beginRide(player, this.targetX, this.targetY, this.targetZ);
+               return;
+            }
          }
 
          // Last resort, the way Running does it: A* found nothing, so dig a straight tunnel toward the target
@@ -896,6 +1447,7 @@ public final class Navigator {
          List<Pathfinder.Step> tunnel = this.tunnel(player);
 
          if (!tunnel.isEmpty()) {
+            this.recordRuleDecision(player, "plan", "tunnel");
             this.path = tunnel;
             this.index = 0;
             this.ticks = 0;
@@ -916,22 +1468,30 @@ public final class Navigator {
             return;
          }
 
+         if (this.neuralRescue(player)) {
+            return;
+         }
+
          this.path = List.of();
          this.index = 0;
          this.mode = Mode.IDLE;
-         this.detail = result.failure();
+         // A TUNNEL decision skips the search, so there is no result to take the failure text from.
+         String failure = result == null ? "tunnel" : result.failure();
+         this.detail = failure;
 
          if (report) {
             this.output.error("nav.no_path", coord(this.targetX, this.targetY, this.targetZ),
-               result.visited(), result.failure());
+               result == null ? 0 : result.visited(), failure);
          }
 
          return;
       }
 
+      this.recordRuleDecision(player, "plan", "normal");
       this.path = result.steps();
       this.index = 0;
       this.ticks = 0;
+      this.planFailures = 0;
       this.waypointTicks = 0;
       this.stuck = 0;
       this.lastX = player.x();
@@ -977,11 +1537,21 @@ public final class Navigator {
    }
 
    private void replan(final BotPlayer player, final String reason) {
-      this.replans++;
+      // "continue" is not a failure: a best-effort leg of a long trip ended short of the goal and the next
+      // leg starts from here. Counting it against MAX_REPLANS used to kill every long trip after four legs.
+      boolean continuing = "continue".equals(reason);
 
-      if (this.replans > MAX_REPLANS) {
-         this.stop("nav.replan_failed");
-         return;
+      if (!continuing) {
+         this.replans++;
+
+         if (this.replans > MAX_REPLANS) {
+            if (this.neuralRescue(player)) {
+               return;
+            }
+
+            this.stop("nav.replan_failed");
+            return;
+         }
       }
 
       this.penalty.merge(key(player.blockX(), player.blockY(), player.blockZ()), STUCK_PENALTY, Double::sum);
@@ -992,28 +1562,54 @@ public final class Navigator {
       // Same cut-off goal as the first plan: a stuck leg of a long trip must continue in the next leg, not end
       // the whole trip with "no route from here any more".
       int[] goal = this.reachableGoal(player);
-      Pathfinder.Result result = Pathfinder.find(
+      Pathfinder.Options options = this.options;
+      boolean skipSearch = false;
+
+      if (this.neural) {
+         NeuralChoice choice = this.neuralChoice(player);
+
+         if (choice == null) {
+            return;
+         }
+
+         options = choice.options();
+         skipSearch = choice.tunnel();
+      }
+
+      Pathfinder.Result result = skipSearch ? null : Pathfinder.find(
          this.world,
          player.blockX(), player.blockY(), player.blockZ(),
          goal[0], goal[1], goal[2],
-         this.options,
+         options,
          this.penalty,
          (world, x, y, z) -> this.controls.digTicks(x, y, z)
       );
 
-      if (!result.found()) {
+      if (result == null || !result.found()) {
+         this.planFailures++;
          // Same last resort as the first plan: dig a straight tunnel rather than ending the trip. That is the
          // "no route -> make one" behaviour, and it is why a failed re-plan no longer stops the bot.
          List<Pathfinder.Step> tunnel = this.tunnel(player);
 
          if (!tunnel.isEmpty()) {
+            this.recordRuleDecision(player, "replan", "tunnel");
             this.path = tunnel;
             this.index = 0;
             this.waypointTicks = 0;
             this.stuck = 0;
             this.detail = "tunnel";
             this.mode = Mode.WALK;
+
+            if (continuing) {
+               this.ticks = 0;
+               this.maxTicks = Math.max(240, tunnel.size() * 60);
+            }
+
             this.output.line("nav.replanned", reason, this.replans, tunnel.size());
+            return;
+         }
+
+         if (this.neuralRescue(player)) {
             return;
          }
 
@@ -1021,11 +1617,21 @@ public final class Navigator {
          return;
       }
 
+      this.recordRuleDecision(player, "replan", "normal");
       this.path = result.steps();
       this.index = 0;
+      this.planFailures = 0;
       this.waypointTicks = 0;
       this.stuck = 0;
       this.escalation = 0;
+
+      if (continuing) {
+         // Each leg gets its own budget: the overall-timeout clock is for a trip that is not getting
+         // anywhere, and a leg that was just completed is the opposite of that.
+         this.ticks = 0;
+         this.maxTicks = Math.max(240, this.path.size() * 30);
+      }
+
       this.output.line("nav.replanned", reason, this.replans, this.path.size());
    }
 
@@ -1304,6 +1910,7 @@ public final class Navigator {
       this.controls.releaseAll();
       this.mode = Mode.IDLE;
       this.detail = "arrived";
+      this.recordOutcome("arrived");
 
       if (this.output != null) {
          long seconds = Math.max(0L, (System.currentTimeMillis() - this.startedAt) / 1000L);
@@ -1324,10 +1931,23 @@ public final class Navigator {
       // The published detail is a neutral word ("timeout", "stuck"), so a status read from another thread
       // does not have to know anything about localisation.
       this.detail = messageKey.substring(messageKey.lastIndexOf('.') + 1);
+      this.recordOutcome(this.detail);
 
       if (this.output != null) {
          this.output.line(messageKey);
       }
+   }
+
+   /** The outcome half of the experience log; only trips that recorded at least one decision get one. */
+   private void recordOutcome(final String outcome) {
+      if (!this.tripRecorded || this.experience == null) {
+         return;
+      }
+
+      long seconds = Math.max(0L, (System.currentTimeMillis() - this.startedAt) / 1000L);
+      this.experience.finish(this.tripId, outcome, seconds);
+      this.experience.flush();
+      this.tripRecorded = false;
    }
 
    // ==================== helpers ====================

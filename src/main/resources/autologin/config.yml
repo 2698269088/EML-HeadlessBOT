@@ -1,7 +1,7 @@
 # AutoLogin - rule-driven login for the headless bot.
 #
-# The server password comes from bot.yml's `password` field and is exposed to rules as {{password}}.
-# Leave `credentials.password` blank to use that shared value for every server.
+# The server password always comes from bot.yml's `password` field and is exposed as {{password}}.
+# Any `password` value in this file (including credentials/variables) is ignored.
 #
 # A rule is: when <signal> matches <condition>, run <actions> in order.
 # Built-in templates cover the common flows; list them with `autologin templates`.
@@ -11,19 +11,18 @@ enabled: true
 debug: false
 
 credentials:
-  password: ""     # blank = use bot.yml `password`
   email: ""
 
 variables: {}
 
-# Select built-in templates: authme, register-then-login, join-login-fallback.
+# Select built-in templates: authme, authme-dialog, register-then-login, join-login-fallback.
 templates:
   - authme
 
 # Custom rules are merged with the templates and evaluated by ascending priority.
 #
 # Condition keys (all optional, combined with AND unless nested):
-#   types        = [SYSTEM_CHAT, PUBLIC_CHAT, OVERLAY, TITLE, SERVER_CHANGE, DISCONNECT, WINDOW_OPEN, WINDOW_SLOT]
+#   types        = [SYSTEM_CHAT, PUBLIC_CHAT, OVERLAY, TITLE, SERVER_CHANGE, DISCONNECT, WINDOW_OPEN, WINDOW_SLOT, DIALOG_OPEN, DIALOG_CLOSE]
 #   contains     = ["Please log in", "/login"]
 #   notContains  = ["logged in"]
 #   equals       = "GAME"
@@ -48,6 +47,9 @@ templates:
 #   closeContainer = 0
 #   containerButton = { containerId = 0, button = 1 }
 #   containerClick  = { slot = 11, button = 0 }
+#   dialogInput     = { key = password, value = "{{password}}" }
+#   dialogClick     = "0"                         # index, label, or custom action id
+#   dialogCancel    = true
 rules: []
 
 # Optional per-server login flows. The key is an exact host (any port) or host:port;
@@ -56,6 +58,9 @@ rules: []
 # inherit from the top level unless explicitly set. All servers share the password above,
 # which in turn falls back to bot.yml's password.
 servers:
+  # AuthMe Dialog login/register flow. Password always comes from bot.yml.
+  "test.authme.dialog.top":
+    templates: [authme-dialog]
   # XinMetaPlugin-compatible login flow for 2b2t.xin. Authentication prompts arrive as titles.
   "2b2t.xin":
     templates: []

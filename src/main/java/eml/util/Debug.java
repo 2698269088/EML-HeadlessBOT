@@ -3,6 +3,9 @@ package eml.util;
 import java.io.File;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -19,6 +22,9 @@ import java.util.Map;
  * debug facility, so unreadable or malformed configuration simply means "all switches off".
  */
 public final class Debug {
+   /** Prefix of the per-launch switches; also what the bootstrap forwards to the child JVM. */
+   private static final String PREFIX = "eml.debug.";
+
    private static volatile boolean tracePackets;
    private static volatile boolean traceConnect = true;
    private static volatile boolean traceErrors = true;
@@ -89,8 +95,28 @@ public final class Debug {
    }
 
    private static boolean override(final String key, final boolean current) {
-      String value = System.getProperty("eml.debug." + key);
+      String value = System.getProperty(PREFIX + key);
       return value == null ? current : !"false".equalsIgnoreCase(value);
+   }
+
+   /**
+    * The {@code eml.debug.*} switches this JVM was started with, sorted so a relaunched command line is
+    * reproducible.
+    *
+    * <p>The bootstrap needs this: it starts the JVM that actually reads the switches, so a property given to
+    * the launcher would otherwise be dropped on the floor by the relaunch and the documented "one launch
+    * without editing files" would silently do nothing.
+    */
+   public static List<String> overrides(final java.util.Properties properties) {
+      List<String> keys = new ArrayList<>();
+      for (String name : properties.stringPropertyNames()) {
+         String value = properties.getProperty(name);
+         if (name.startsWith(PREFIX) && value != null && !value.isBlank()) {
+            keys.add(name);
+         }
+      }
+      Collections.sort(keys);
+      return keys;
    }
 
    /** Used by {@code BotConfig} after it has parsed the same file itself. */

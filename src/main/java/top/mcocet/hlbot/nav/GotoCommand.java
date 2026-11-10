@@ -22,12 +22,13 @@ public final class GotoCommand implements BotCommand {
 
    /** Everything {@code goto} accepts: printed by a malformed request. */
    public static final String FULL_USAGE = "goto <x> <y> <z> | goto <x> <z> | goto fly <x> <y> <z>"
-      + " | goto ride <x> <z> | goto smart <x> <y> <z> | goto stop | goto status [nodig]";
+      + " | goto ride <x> <z> | goto smart <x> <y> <z> | goto stop | goto status"
+      + " | goto neural [on|off|record [on|off]|train] | goto mode [auto|fly|dig|move|ride] [nodig]";
 
    /** One lang key per subcommand, each holding its usage and one sentence: what {@code goto help} lists. */
    public static final String[] HELP_KEYS = {
       "goto.help.walk", "goto.help.fly", "goto.help.ride", "goto.help.smart",
-      "goto.help.nodig", "goto.help.stop", "goto.help.status", "goto.help.help"
+      "goto.help.nodig", "goto.help.stop", "goto.help.status", "goto.help.mode", "goto.help.neural", "goto.help.help"
    };
 
    @Override

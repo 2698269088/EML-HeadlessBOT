@@ -192,6 +192,9 @@ public final class Commands {
       register(new Msgs());
       register(new Jfr());
       register(new PluginList());
+      register(new DialogCommand());
+      register(new ItemCommand());
+      register(new ContainerCommand());
       register(new Login());
       // One action, three spellings. 'goto stop' stays the navigator's; these three exit the bot.
       register(new Quit("quit"));

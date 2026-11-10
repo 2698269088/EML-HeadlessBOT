@@ -8,6 +8,7 @@ import net.minecraft.DetectedVersion;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.headless.BotConfig;
 import net.minecraft.client.headless.BotLang;
+import net.minecraft.client.headless.BotStatusBar;
 import net.minecraft.client.headless.BotTerminal;
 import net.minecraft.client.headless.Commands;
 import net.minecraft.client.headless.Console;
@@ -65,14 +66,15 @@ public final class BotApplication {
       // System.out in a logging pipe; message lines go through log4j (see ConsoleIO).
       ConsoleIO io = new ConsoleIO();
       File gameDirectory = new File(args.getOrDefault("gameDir", args.getOrDefault("cwd", ".")));
+      // Persistent config (bot.yml): a missing or incomplete file means interactive setup;
+      // a complete one connects automatically. Command-line flags always win over the file.
+      BotConfig config = BotConfig.load(new File(gameDirectory, "bot.yml"));
+      BotStatusBar.setEnabled(config.statusBar());
       // JLine terminal (tab completion / highlighting / history); log lines print above the
       // input line via JLineLogAppender from here on. Falls back to plain I/O without a tty.
       BotTerminal.init(gameDirectory.toPath());
       Runtime.getRuntime().addShutdownHook(new Thread(BotTerminal::close, "Terminal shutdown"));
       BufferedReader stdin = Console.standardIn();
-      // Persistent config (bot.yml): a missing or incomplete file means interactive setup;
-      // a complete one connects automatically. Command-line flags always win over the file.
-      BotConfig config = BotConfig.load(new File(gameDirectory, "bot.yml"));
       // Console language: --language flag > bot.yml 'language' > OS locale > en_us.
       BotLang.init(args.getOrDefault("language", config.language()));
       // Game-content translations (chat templates, join/leave, deaths) follow the same choice.
@@ -141,6 +143,17 @@ public final class BotApplication {
          }
       };
       top.mcocet.hlbot.nav.Navigator.INSTANCE.install(world, controls, navOutput);
+      // Neural planning (navigation.neural) and experience recording (navigation.record), both default off:
+      // `goto neural on|off|record on|off` flips them at runtime and the choice is persisted here, because
+      // the nav package itself deliberately has no access to bot.yml. The custom model and the experience
+      // log live next to it: training writes the model, deleting it rolls back to the bundled one.
+      top.mcocet.hlbot.nav.Navigator.INSTANCE.installNeural(config.navigationNeural(), enabled -> {
+         config.setNavigationNeural(enabled);
+         config.save();
+      }, config.navigationRecord(), record -> {
+         config.setNavigationRecord(record);
+         config.save();
+      }, new java.io.File(gameDirectory, "navigation.net"), new java.io.File(gameDirectory, "debug/nav-experience.tsv"));
       Commands.register(new top.mcocet.hlbot.nav.GotoCommand());
 
       // SuperPearl (`sp`): walk to a pearl button, press it and let the pearl carry the body home. Same
@@ -199,6 +212,11 @@ public final class BotApplication {
       io.printlnRaw(BotLang.get("bot.bye"));
       // Restore the terminal state before the process leaves.
       BotTerminal.close();
+      // Returning from main would leave the JVM waiting for every non-daemon thread, and a plugin can start
+      // one that outlives the session (ViaVersion's scheduler never stops unless the plugin destroys it), in
+      // which case 'stop' printed goodbye and the process simply stayed alive. The session is already down
+      // and its files are flushed, so ending the process here is the honest reading of "stop".
+      System.exit(0);
    }
 
    /**

@@ -12,8 +12,8 @@ import org.yaml.snakeyaml.Yaml;
 
 /**
  * Parsed {@code autologin.yml}. Top-level keys mirror XinConnect: {@code enabled}, {@code debug},
- * {@code credentials}, {@code variables}, {@code templates} and {@code rules}. The {@code password}
- * credential may be left blank here to fall back to {@code bot.yml}'s {@code password}. Entries under
+ * {@code credentials}, {@code variables}, {@code templates} and {@code rules}. The password is always
+ * supplied from {@code bot.yml} by {@link AutoLogin}; any password written here is ignored. Entries under
  * {@code servers} replace the templates/rules for one exact host or host:port and overlay the other settings.
  */
 final class AutoLoginConfig {

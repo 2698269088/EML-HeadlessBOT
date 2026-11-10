@@ -19,7 +19,7 @@
 | 参数 | 说明 |
 | --- | --- |
 | `--username <name>` | 用户名（省略则交互询问，并写入 `<gameDir>/bot.yml`） |
-| `--server <host> --port <n>` | 启动后自动连接；`--address` 是 `--server` 的别名 |
+| `--server <host> --port <n>` | 启动后自动连接；`--address` 是 `--server` 的别名。端口为默认 25565 时自动查询 `_minecraft._tcp.<域名>` SRV 记录，Ping、登录及重连使用解析结果；显式非默认端口和 IP 地址直连 |
 | `--online <true\|false>` | 正版验证模式 |
 | `--viewDistance auto\|<n>` | 上报给服务器的视距（区块半径）。`auto`（默认）以服务器为准：登录包里的服务器视距会被直接采用；写数字 2–32 则作为上限（服务器仍可再压） |
 | `--language <code>` | 控制台语言：`en_us` / `zh_cn` / `zh_tw` / `ru_ru` / `ja_jp`；省略时取 `bot.yml` 的 `language`，再退到系统区域，最后 `en_us` |
@@ -44,7 +44,7 @@
 
 ## 控制台命令
 
-控制台基于 JLine：带补全、历史与高亮；输出行会打印在输入行上方。所有命令都在下方"内置功能"或"插件系统"中有对应说明。
+控制台基于 JLine：带补全、历史与高亮；输出行会打印在输入行上方。支持滚动区域的终端会在顶部常驻一行 BOT 状态栏，显示账号、服务器、连接/Ping、坐标、血量和寻路状态，日志滚动时状态栏保持不动；不支持该能力的终端自动使用普通输出。所有命令都在下方"内置功能"或"插件系统"中有对应说明。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -69,6 +69,17 @@
 | `msgs [count]` | 最近的聊天/系统消息（默认 10 条） |
 | `jfr <start\|stop>` | JFR 采样，输出到 `debug/*.jfr` |
 | `plugins [reload\|enable\|disable\|load <jar>\|unload <name>]` | 插件列表与生命周期管理 |
+| `dialog [info]` | 解析当前自定义对话框的标题、正文、输入项和按钮（不回显输入内容） |
+| `dialog help` | 显示各子命令的参数、索引规则、取消行为与 AuthMe 示例 |
+| `item <0-35> <left\|right>` | 将指定快捷栏/背包物品切换到主手，然后左键攻击/挖掘或右键使用；`item help` 查看说明 |
+| `container info` | 仅在有容器打开时显示 containerId、菜单槽位和物品 |
+| `container left/right <slot>` | 左键/右键点击容器物品 |
+| `container move <from> <to>` / `shift <slot>` | 移动物品 / 快速移动物品 |
+| `container drop <slot> [all]` / `swap <slot> <hotbar>` / `offhand <slot>` | 丢弃、与快捷栏交换、与副手交换 |
+| `container collect <slot>` / `button <id>` / `close` | 收集同类物品、点击容器按钮、关闭容器；`container help` 查看全部命令 |
+| `dialog set <key> <value...>` | 填写文本、布尔、单选或数值输入项；`""` 可清空文本 |
+| `dialog click <index\|label\|action>` | 按序号、按钮文本或自定义动作 ID 点击按钮 |
+| `dialog cancel` | 执行对话框允许的取消动作 |
 | `goto ...` | 内置寻路（见下） |
 | `sp ...` | 珍珠按钮动作（见下） |
 | `autologin ...` | 自动登录（见下） |
@@ -87,6 +98,7 @@ password: ""              # 进服密码，供 AutoLogin 以 {{password}} 引用
 online: false             # false = 离线模式（用户名派生稳定 UUID）
 viewDistance: auto        # auto = 以服务器为准（默认）；数字 2-32 = 上限
 language: zh_cn
+statusBar: true           # 顶部常驻 BOT 状态栏；false = 使用普通控制台
 autoRespawn: false        # 死亡后自动复活；false 时用 respawn 命令
 autoJump: false           # 原版自动跳跃；默认关闭，避免与脚本寻路打架
 pingBeforeConnect: true   # 登录前先做状态 ping
@@ -104,6 +116,9 @@ plugins:
   disableOnError: true    # 插件抛异常即停用，而不是留在半死状态
   failThreshold: 1        # 累计失败多少次后停用（1 = 立即）
 resourcePacks: accept     # accept = 一律应答"已接受/已加载"（无头端不解包）；decline = 拒绝可选包
+navigation:
+  neural: false           # 神经寻路：每段规划由内置微型网络选策略；goto neural on|off 可切换并写回
+  record: false           # 寻路经验记录（供 goto neural train 训练）；goto neural record on|off 可切换
 jvm:
   - "-Xmx384m"
   - "-XX:+UseCompactObjectHeaders"
@@ -117,17 +132,16 @@ jvm:
 
 ### 自动登录：`AutoLogin`
 
-规则写在 `<gameDir>/autologin.yml`（首次启动自动从内置模板生成），密码来自 `bot.yml` 的 `password`，规则中可用 `{{password}}` 引用。它是「规则-动作」引擎：命中 `when` 条件就按顺序执行 `actions`，风格对齐 XinConnect。
+规则写在 `<gameDir>/autologin.yml`（首次启动自动从内置模板生成）。密码**始终只读取** `bot.yml` 的 `password`，规则中可用 `{{password}}` 引用；`autologin.yml` 的 `credentials` 或 `variables` 中即使写了 `password` 也会被忽略。它是「规则-动作」引擎：命中 `when` 条件就按顺序执行 `actions`，风格对齐 XinConnect。
 
 ```yaml
 enabled: true
 debug: false
 credentials:
-  password: ""            # 留空 = 使用 bot.yml 的 password
   email: ""
 variables: {}
 templates:
-  - authme                # 内置模板：authme / register-then-login / join-login-fallback
+  - authme                # authme / authme-dialog / register-then-login / join-login-fallback
 rules: []                 # 自定义规则，与模板合并后按 priority 升序评估
 servers: {}               # 可选：按服务器地址选用不同的模板和规则
 ```
@@ -136,6 +150,8 @@ servers: {}               # 可选：按服务器地址选用不同的模板和�
 
 ```yaml
 servers:
+  "test.authme.dialog.top":
+    templates: [authme-dialog]
   "hub.example.com:25565":
     templates: [authme]
   "play.example.com":
@@ -149,7 +165,21 @@ servers:
 
 预配置已包含 `2b2t.xin` 的 XinMetaPlugin 兼容流程：标题含"注册"时执行 `reg {{password}} {{password}}`，含"登陆"时执行 `l {{password}}`，出现"登陆成功"后进入 `LOGGED_IN` 阶段，使用快捷栏第 3 格（`selectSlot: 2`）的物品，并在进服菜单中点击名称含 `Game/戏/队/入` 的槽位。此类规则使用 `TITLE` 信号；动作栏仍使用 `OVERLAY` 信号。
 
-条件（`when`）支持 `types / contains / notContains / equals / startsWith / regex / stage / notStage / sender / overlay / ignoreCase` 以及 `all / any / not` 组合；`types` 可取 `SYSTEM_CHAT / PUBLIC_CHAT / OVERLAY / TITLE / SERVER_CHANGE / DISCONNECT / WINDOW_OPEN / WINDOW_SLOT`。动作支持 `command / chat / stage / setVariable / log / selectSlot / useItem / closeContainer / containerButton / containerClick`；字符串字段支持 `{{变量}}` 插值。`WINDOW_OPEN` 提供容器标题，`WINDOW_SLOT` 提供物品名称及 `{{containerId}}`、`{{slot}}` 变量；`containerClick` 的槽位可写成 `slot: "{{slot}}"`。规则修饰：`priority`（小优先）、`once`、`cooldownMs`、`stopOnMatch`。
+条件（`when`）支持 `types / contains / notContains / equals / startsWith / regex / stage / notStage / sender / overlay / ignoreCase` 以及 `all / any / not` 组合；`types` 可取 `SYSTEM_CHAT / PUBLIC_CHAT / OVERLAY / TITLE / SERVER_CHANGE / DISCONNECT / WINDOW_OPEN / WINDOW_SLOT / DIALOG_OPEN / DIALOG_CLOSE`。动作支持 `command / chat / stage / setVariable / log / selectSlot / useItem / closeContainer / containerButton / containerClick / dialogInput / dialogClick / dialogCancel`；字符串字段支持 `{{变量}}` 插值。`WINDOW_OPEN` 提供容器标题，`WINDOW_SLOT` 提供物品名称及 `{{containerId}}`、`{{slot}}` 变量；`containerClick` 的槽位可写成 `slot: "{{slot}}"`。`DIALOG_OPEN` 提供自定义对话框标题，`dialogInput` 使用 `{ key: password, value: "{{password}}" }`，`dialogClick` 接受按钮序号、文本或自定义动作 ID。规则修饰：`priority`（小优先）、`once`、`cooldownMs`、`stopOnMatch`。
+
+例如 AuthMe 的注册 Dialog 可以这样自动填写并提交：
+
+```yaml
+- id: authme-dialog-register
+  once: true
+  when:
+    types: [DIALOG_OPEN]
+    contains: ["注册"]
+  actions:
+    - dialogInput: { key: password, value: "{{password}}" }
+    - dialogInput: { key: confirm, value: "{{password}}" }
+    - dialogClick: "authme:prejoin-register/submit"
+```
 
 控制台命令：
 
@@ -250,6 +280,10 @@ blacklist: []
 | `goto ride <x> <z>` | 骑上最近的船/矿车/马开到目标点，然后下车 |
 | `goto stop` | 停下并松开所有按键 |
 | `goto status` | 当前模式 / 进度 / 已用 tick / 重算次数 |
+| `goto neural [on\|off]` | 查看/切换神经规划（默认关闭，切换会写回 `bot.yml`） |
+| `goto neural record [on\|off]` | 查看/切换寻路经验记录（默认关闭，写回 `bot.yml`） |
+| `goto neural train` | 用已记录的经验训练自定义模型，完成后立即生效 |
+| `goto mode [auto\|fly\|dig\|move\|ride]` | 查看/设置寻路模式（见下，运行时生效） |
 | `goto ... nodig` | 只绕路不挖方块 |
 
 **规划**：在 `BotWorld` 的地形缓存上跑网格 A*（`Pathfinder`）。移动集合是键盘真能做到的全部动作——同层直走/斜走（斜走要求两个正交邻格都空，避免切角）、上一格（跳）、**游泳**（水中任意方向，含上下浮沉）、**攀爬**（梯子/藤蔓/脚手架上下）、下落（陆地 1–3 格不摔伤，**落点是水则允许更深**）、**挖横行**、**挖竖井**（只在下方是干、实、可站的地面时）。可挖什么由手上的工具决定（`BotControls.digTicks` 按物品的破坏速度算 tick 数），所以带镐子时石头算普通一步，空手时不会选它。危险方块（岩浆/火/仙人掌/蛛网…）禁行，**没加载的区块一律视为不可通行**。
@@ -269,6 +303,43 @@ blacklist: []
 - `ride`：就近 8 格找船/矿车/马，走过去右键骑上 → 朝目标开（船用左右键转向，因为船的朝向不吃玩家视角；马用视角）→ 距目标 3 格内按潜行下车。
 
 **失败处理**：掉线、死亡、整体超时、重算次数用尽、一直不落地、没有鞘翅、附近没有载具、骑不上载具，都会结束行程并在控制台说明原因。tick 内抛异常只中止行程，不会掀掉客户端 tick 循环。
+
+**寻路模式**：`goto mode` 设置操作者的固定偏好（运行时生效，不写回配置），对规则寻路和神经决策同时生效：
+
+| 模式 | 行为 |
+| --- | --- |
+| `auto` | 默认：按距离与失败情况在步行/鞘翅/载具间升级 |
+| `fly` | 飞行优先：有鞘翅就直接滑翔，飞不了才步行 |
+| `dig` | 挖掘优先：强制允许破坏方块（覆盖 `nodig`）、挖掘耐心 ×2，并允许放置方块搭桥补路；失败时直接走直挖兜底，不升级飞行/骑乘 |
+| `move` | 移动优先：只步行/游泳，任何情况下都不自动升级为飞行或骑乘（神经的 `fly`/`ride` 决策同样被忽略） |
+| `ride` | 骑乘优先：附近有船/矿车/马就直接骑乘，没有才步行 |
+
+**长距离与神经规划**：目标在未加载区块时，`reachableGoal` 会把本段目标截到已加载区域边缘，走完一段再「continue」规划下一段——这种正常推进**不消耗** 4 次重算配额，且每段重新计时（只有停滞/卡死才计入重算与整体超时），所以几千格的 `goto` 不会再走完四段就放弃。开启 `navigation.neural`（或 `goto neural on`）后，每段规划前由一个内置微型网络（`models/navigation.net`，约 4.7 KB，运行时零依赖、不训练）决定**这段路用什么方式、什么策略前进**。
+
+网络的输入是直接观测到的状态：到**真实目标**的距离与高度差、目标是否未加载、周围 17×5×17 格的可站立/危险/水域比例、**朝目标方向 24 格 × 3 宽的路面走廊采样**（可站立/水域/危险比例——这让网络能在动手前区分"前方是河"还是"前方是平原"）、是否装备鞘翅、附近是否有可乘载具、连续规划失败次数、上段路径长度。
+
+| 决策 | 效果 |
+| --- | --- |
+| `normal` | 步行，默认 A* 参数 |
+| `wide` | 步行，节点预算 ×4、水平半径 ×2：长距离开阔地用更少、更长的分段 |
+| `dig` | 步行，挖掘耐心 ×2（更慢的方块也值得挖）；`nodig` 请求不会被翻成挖掘 |
+| `swim` | 步行+游泳：前方走廊以水域为主时直接下水，允许更深的入水落差 |
+| `fly` | 有鞘翅且距离很远、走廊安全时，交给鞘翅滑翔（烟花加速沿用原逻辑） |
+| `ride` | 附近有船/矿车/马且距离适中时，骑乘前进（水路优先选船，沿用 `routeNeedsWater`） |
+| `tunnel` | 跳过 A*，直接走既有的直挖兜底（仅挖掘允许时） |
+| `stop` | 干净地放弃行程并说明原因 |
+
+`fly`/`ride` 在条件实际不满足（没鞘翅、附近没载具）时自动落回步行；模型加载失败或开关关闭时完全走原有固定规则。
+
+**失败救援**：即将报「当前位置已无可用路线」（`nav.replan_failed` / `nav.no_path`）放弃之前，若神经开关开着，会把"刚刚失败"计入特征让网络再做一次救援决策（`neuralRescue`）：换交通方式（`fly`/`ride`），或换参数重试一次 A*（`wide`/`dig`/`swim`）。救援成功会重置失败与重算计数、打印 `nav.neural_rescue`；救援也失败、或网络给出 `normal`/`tunnel`/`stop` 时才真正停止。救援不会递归触发，神经关闭时行为不变。
+
+训练是离线行为克隆一条人工专家策略（`nav.neural.NavModelTrainer`），不是强化学习；改专家规则后在仓库根目录重跑训练器即可重新生成 `src/main/resources/models/navigation.net`。
+
+**经验记录与再训练**：`navigation.record: true`（或 `goto neural record on`）开启后，每次神经决策都会把"当时的特征向量 + 决策 + 行程 id"追加到 `debug/nav-experience.tsv`（D 行），行程结束再写一行结局（E 行：arrived / 失败原因 / 耗时）。跑过一些行程后执行 `goto neural train`：
+
+- 只取**最终到达**的行程做样本（行为克隆"哪些决策导致了成功"），救援成功的决策权重 ×2，并混入等量专家样本防止遗忘；训练/验证按行程划分，互不泄漏。
+- 训练在后台线程跑，不卡客户端 tick；完成后新模型写入 `<gameDir>/navigation.net` 并**立即热加载**。
+- 自定义模型优先于 jar 内置模型；**删除 `<gameDir>/navigation.net` 即回滚**到内置默认。成功样本不足（<20）会拒绝训练并提示先记录更多经验。
 
 **已知边界（有意为之）**：不搭桥、不跨维度、不做 parkour 跳跃、不主动绕开虚空；`fly` 是定向滑翔而不是地形感知的飞行规划（长距离/复杂地形可能撞山）；`ride` 只处理船/矿车/马三类、且必须已经在附近。单次规划上限 8000 个节点、96 格水平半径、垂直 ±12 格。
 
@@ -359,6 +430,7 @@ public final class MyListener implements Listener {
 | `events.chat` | `ChatMessageEvent`、`SendChatEvent`、`SendCommandEvent` |
 | `events.connection` | `LoginSuccessEvent`、`DisconnectEvent`、`RespawnEvent` |
 | `events.player` | `PlayerJoinedEvent`、`PlayerLeftEvent`、`PlayerDeathEvent`、`HealthChangedEvent`、`ExperienceChangedEvent`、`HeldItemChangedEvent`、`ContainerOpenedEvent`、`ContainerClosedEvent`、`ContainerSlotUpdatedEvent` |
+| `events.dialog` | `DialogOpenedEvent`、`DialogClosedEvent`（携带不可变 Dialog 快照与关闭原因） |
 | `events.level` | `BlockUpdatedEvent`、`ChunkLoadedEvent`、`ChunkUnloadedEvent`、`ExplosionEvent` |
 | `events.entity` | `EntityJoinLevelEvent`、`EntityLeaveLevelEvent`、`MobEffectAddedEvent`、`MobEffectRemovedEvent` |
 | `events.recipe` | `RecipesUpdatedEvent`、`RecipeUnlockedEvent` |
@@ -409,6 +481,7 @@ public final class MyCommand implements BotCommand {
 | 世界 | `world()` · `blockAt(x,y,z)` · `isChunkLoaded(x,z)` · `setViewDistance(n)` · `viewDistance()` |
 | 控制 | `controls()`（按键、瞄准、挖掘、放置、工具选择、载具、交互） |
 | 背包 | `inventory()`（容器点击协议、堆叠移动、热键交换、按钮、创造模式发物、配方） |
+| 对话框 | `dialogs()`（`snapshot/inputs/buttons/inputValue/describe`、`setInput`、`click`、`cancel`、`close`） |
 | 寻路 | `navigation()`（`walk/fly/ride/stop/status/mode`，只入队，下一个 tick 在客户端线程执行） |
 | 监控 | `onlinePlayers()` · `metrics()` · `consoleSince(seq, limit)` · `consoleSequence()` · `tickCount()` · `skippedPackets()` |
 | 输出/路径 | `print` · `printError` · `printBlock` · `gameDirectory()` |

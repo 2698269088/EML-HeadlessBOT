@@ -165,7 +165,9 @@ public final class MinecraftLifecycle {
       // Headless never opens screens, so pause can only come from the level itself.
       self.pause = false;
       self.deltaTracker.updatePauseState(self.pause);
-      self.deltaTracker.updateFrozenState(!self.isLevelRunningNormally());
+      boolean levelRunning = self.isLevelRunningNormally();
+      self.deltaTracker.updateFrozenState(!levelRunning);
+      eml.hooks.BotRuntime.tickClock(levelRunning, self.level != null && self.level.tickRateManager().isFrozen());
    }
 
    /** {@code Minecraft.tick()}: the vanilla tick minus GUI/screens/input/particles/sound. */

@@ -119,11 +119,8 @@ public final class AutoLogin extends Plugin {
       seed.putAll(selection.credentials());
       seed.putAll(selection.variables());
 
-      String password = seed.get("password");
-      if (password == null || password.isBlank()) {
-         BotConfig botConfig = BotConfig.instance();
-         seed.put("password", botConfig == null ? "" : botConfig.password());
-      }
+      BotConfig botConfig = BotConfig.instance();
+      seed.put("password", botConfig == null ? "" : botConfig.password());
 
       String username = this.getApi() == null ? null : this.getApi().username();
       if (username != null && !username.isBlank()) {

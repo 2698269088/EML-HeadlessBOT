@@ -47,6 +47,10 @@ public abstract class Plugin {
       this.builtinName = name;
       this.dataFolder = configFile.getParentFile();
       this.config = new Config(configFile);
+      // Read it now: attach() is the only path that hands a config file over already-created, so if the
+      // load happened lazily in getConfig() it would be skipped forever (getConfig() returns the non-null
+      // instance as-is) and every setting would silently fall back to its default.
+      this.config.load();
       this.api = api;
       this.logger = org.slf4j.LoggerFactory.getLogger(name);
    }

@@ -147,6 +147,11 @@ public final class BotApi {
       return this.inventory;
    }
 
+   /** Server-driven dialogs: inspect inputs, set values, click actions or cancel. Client thread only. */
+   public eml.action.BotDialogs dialogs() {
+      return eml.action.BotDialogs.INSTANCE;
+   }
+
    /**
     * Inbound packets the dispatch guard skipped because a vanilla handler hit a renderer, audio or GUI
     * object the headless client does not have. Zero is the normal value; a number that keeps growing means a
@@ -475,6 +480,14 @@ public final class BotApi {
    /** Registers all {@code @EventHandler} methods of {@code listener}. */
    public void registerEvents(final Listener listener, final Plugin plugin) {
       this.pluginManager.registerEvents(listener, plugin);
+   }
+
+   /**
+    * Registers a protocol bridge, which stays active across disconnects and is withdrawn when the plugin
+    * unloads. Call from {@link Plugin#onLoad()} so it is in place before the first connection.
+    */
+   public void registerProtocolBridge(final ProtocolBridge bridge, final Plugin plugin) {
+      this.pluginManager.registerProtocolBridge(bridge, plugin);
    }
 
    public PluginManager plugins() {

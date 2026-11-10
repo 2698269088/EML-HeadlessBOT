@@ -37,6 +37,7 @@ public final class BotConfig {
    /** {@code auto} follows the server's radius; a number caps it. See {@link ViewDistance}. */
    private ViewDistance viewDistance = ViewDistance.AUTO;
    private String language;
+   private boolean statusBar = true;
    private boolean autoRespawn;
    private boolean autoJump;
    private boolean autoReconnect = true;
@@ -53,6 +54,10 @@ public final class BotConfig {
    private boolean pluginsDisableOnError = true;
    private int pluginsFailThreshold = 1;
    private String resourcePacks = "accept";
+   /** Neural planning strategy for the navigator; off by default, toggled with 'goto neural on|off'. */
+   private boolean navigationNeural;
+   /** Experience recording for neural training; off by default, toggled with 'goto neural record on|off'. */
+   private boolean navigationRecord;
    /** The JVM flags to write back unchanged; see {@link JvmSettings}. */
    private JvmSettings jvm = JvmSettings.empty();
 
@@ -76,6 +81,7 @@ public final class BotConfig {
                // or a number, so the raw value is normalised before parsing.
                config.viewDistance = ViewDistance.parse(stringValue(map.get("viewDistance"), "auto"));
                config.language = stringValue(map.get("language"), null);
+               config.statusBar = boolValue(map.get("statusBar"), true);
                config.autoRespawn = boolValue(map.get("autoRespawn"), false);
                config.autoJump = boolValue(map.get("autoJump"), false);
                config.autoReconnect = boolValue(map.get("autoReconnect"), true);
@@ -99,6 +105,12 @@ public final class BotConfig {
                }
 
                config.resourcePacks = stringValue(map.get("resourcePacks"), "accept");
+
+               if (map.get("navigation") instanceof Map<?, ?> navigation) {
+                  config.navigationNeural = boolValue(navigation.get("neural"), false);
+                  config.navigationRecord = boolValue(navigation.get("record"), false);
+               }
+
                // Only kept so save() can write it back; the bootstrap already applied it to this JVM.
                config.jvm = JvmSettings.extract(map);
             }
@@ -153,6 +165,11 @@ public final class BotConfig {
    /** Console language code (en_us/zh_cn/zh_tw/ru_ru/ja_jp), or null for OS auto-detect. */
    public String language() {
       return this.language;
+   }
+
+   /** Whether the terminal reserves its top row for live bot status. */
+   public boolean statusBar() {
+      return this.statusBar;
    }
 
    /** When true the bot respawns on its own after death; otherwise it waits for the 'respawn' command. */
@@ -227,6 +244,24 @@ public final class BotConfig {
       return this.resourcePacks;
    }
 
+   /** Neural planning strategy for {@code goto}; off by default. */
+   public boolean navigationNeural() {
+      return this.navigationNeural;
+   }
+
+   public void setNavigationNeural(final boolean enabled) {
+      this.navigationNeural = enabled;
+   }
+
+   /** Record neural decisions and trip outcomes for `goto neural train`; off by default. */
+   public boolean navigationRecord() {
+      return this.navigationRecord;
+   }
+
+   public void setNavigationRecord(final boolean enabled) {
+      this.navigationRecord = enabled;
+   }
+
    public void setUsername(final String username) {
       this.username = username;
       this.save();
@@ -263,6 +298,8 @@ public final class BotConfig {
          + "# keeps, so a server configured for a large view distance is worth capping here.\n"
          + "viewDistance: " + this.viewDistance.render() + "\n"
          + "language: " + (this.language == null ? "" : this.language) + "\n"
+         + "# Pin live account, server, position, health and navigation status to the terminal's top row.\n"
+         + "statusBar: " + this.statusBar + "\n"
          + "autoRespawn: " + this.autoRespawn + "\n"
          + "# Vanilla auto-jump walks the player up one-block steps on its own. A scripted pathfinder should own\n"
          + "# the movement, so this defaults to false (options.txt is overridden).\n"
@@ -294,6 +331,15 @@ public final class BotConfig {
          + "# Resource packs: 'accept' answers ACCEPTED + SUCCESSFULLY_LOADED without downloading anything\n"
          + "# (a headless client never applies pack contents); 'decline' refuses optional packs.\n"
          + "resourcePacks: " + this.resourcePacks + "\n"
+         + "# Neural navigation: a tiny bundled network picks the planning strategy for each leg of a trip\n"
+         + "# (normal A*, a wider search, patient digging, a straight tunnel, or a clean stop), using the\n"
+         + "# distance to the real target and the surrounding terrain as its inputs. Off by default;\n"
+         + "# 'goto neural on|off' toggles it at runtime and writes the choice back here.\n"
+         + "# record: logs every neural decision and trip outcome to debug/nav-experience.tsv for\n"
+         + "# 'goto neural train', which trains a custom navigation.net from it (off by default).\n"
+         + "navigation:\n"
+         + "  neural: " + this.navigationNeural + "\n"
+         + "  record: " + this.navigationRecord + "\n"
          + "# JVM flags for the bot process. One flag per line; read by the bootstrap when it starts the JVM,\n"
          + "# so a change applies on the next start. Appended after the flags the bootstrap needs, and the JVM\n"
          + "# resolves duplicates last-wins - a line here overrides a default rather than adding to it. With no\n"

@@ -10,8 +10,9 @@ import net.minecraft.network.chat.Component;
  * <p>These exist because the headless client's most damaging failure mode is silent: an exception thrown
  * while a login/configuration packet is handled ends up inside a {@code CompletableFuture}, the channel is
  * closed, and the server only ever reports a bare "Disconnected". The two places every such path must pass
- * are {@code Connection.exceptionCaught} and {@code Connection.disconnect}, and both are wrapped here - so
- * the reason and the calling frames are recorded even when nothing else is printed.
+ * are {@code Connection.exceptionCaught} and {@code Connection.disconnect}, and both are wrapped here. An
+ * exception is always logged; disconnects are logged only while {@code debug.connect} is on, and a deliberate
+ * disconnect or shutdown not at all - normal teardown is not a failure to diagnose.
  *
  * <p>Every hook starts with a switch test and swallows its own failures: a diagnostic that can throw into
  * the network pipeline would turn a logged failure into a crash.
@@ -57,21 +58,19 @@ public final class BotDebug {
       }
    }
 
-   /** Observation hook for {@code Connection.disconnect(Component)}. */
+   /** Observation hook for {@code Connection.disconnect(Component)}: one summary line, no caller frames. */
    public static void onDisconnect(final Connection self, final Component reason) {
       // The reason also feeds DisconnectEvent, which is announced from the client thread rather than here.
       BotRuntime.noteDropReason(reason);
-      String text = reason == null ? "<none>" : reason.getString();
 
-      if (eml.util.Debug.connect()) {
-         BotRuntime.log().info("[debug] disconnect ({}): {}", state(self), text);
-         traceCallers("disconnect");
-      } else {
-         BotRuntime.log().info("[debug] disconnect ({}): {}", state(self), text);
+      if (quiet()) {
+         return;
       }
+
+      BotRuntime.log().info("[debug] disconnect ({}): {}", state(self), reason == null ? "<none>" : reason.getString());
    }
 
-   /** Observation hook for {@code Connection.disconnect(DisconnectionDetails)}. */
+   /** Observation hook for {@code Connection.disconnect(DisconnectionDetails)}: the full line, plus who asked. */
    public static void onDisconnectDetails(final Connection self, final DisconnectionDetails details) {
       if (details == null) {
          return;
@@ -79,12 +78,24 @@ public final class BotDebug {
 
       Component reason = details.reason();
       BotRuntime.noteDropReason(reason);
-      BotRuntime.log().info("[debug] disconnect ({}) with report {}", state(self), details.report().map(Object::toString).orElse("<none>"));
 
-      if (eml.util.Debug.connect()) {
-         BotRuntime.log().info("[debug] reason: {}", reason == null ? "<none>" : reason.getString());
-         traceCallers("disconnect");
+      if (quiet()) {
+         return;
       }
+
+      BotRuntime.log().info("[debug] disconnect ({}): {} (report {})", state(self),
+         reason == null ? "<none>" : reason.getString(), details.report().map(Object::toString).orElse("<none>"));
+      traceCallers("disconnect");
+   }
+
+   /**
+    * A deliberate disconnect or a shutdown is normal operation, not a failure to diagnose, so it logs
+    * nothing. Unexpected drops are logged only while {@code debug.connect} is on: the two disconnect
+    * overloads share one summary plus one caller trace between them, instead of each printing its own
+    * reason and frames.
+    */
+   private static boolean quiet() {
+      return BotRuntime.userDisconnectRequested() || BotRuntime.shutdownRequested() || !eml.util.Debug.connect();
    }
 
    private static String state(final Connection self) {

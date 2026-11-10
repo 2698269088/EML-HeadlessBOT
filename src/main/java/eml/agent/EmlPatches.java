@@ -11,9 +11,11 @@ import eml.template.ChatListenerRouting;
 import eml.template.ClientLevelEffects;
 import eml.template.ClientLoginHandling;
 import eml.template.ClientPacketHandling;
+import eml.template.DialogHandling;
 import eml.template.LevelLoadReadiness;
 import eml.template.MinecraftLifecycle;
 import eml.template.PacketSafetyNet;
+import eml.template.ProtocolBridgePatch;
 import eml.template.RenderCoupling;
 import eml.template.ResourcePackHandling;
 
@@ -54,6 +56,7 @@ public final class EmlPatches {
    private static final String PACKET_ENTRY = "net/minecraft/network/PacketProcessor$ListenerAndPacket";
    private static final String UNDERWATER_AMBIENCE = "net/minecraft/client/resources/sounds/UnderwaterAmbientSoundHandler";
    private static final String BIOME_AMBIENCE = "net/minecraft/client/resources/sounds/BiomeAmbientSoundsHandler";
+   private static final String KEY_MAPPING = "net/minecraft/client/KeyMapping";
 
    private EmlPatches() {
    }
@@ -63,6 +66,7 @@ public final class EmlPatches {
       lifecycle(patches);
       chat(patches);
       resourcePacks(patches);
+      protocolBridge(patches);
       renderCoupling(patches);
       events(patches);
       diagnostics(patches);
@@ -101,6 +105,10 @@ public final class EmlPatches {
       out.add(new BodyReplace(MINECRAFT, "clearClientLevel", "(Lnet/minecraft/client/gui/screens/Screen;)V", MinecraftLifecycle.class, "clearClientLevel"));
       out.add(new BodyReplace(MINECRAFT, "close", "()V", MinecraftLifecycle.class, "close"));
       out.add(new BodyReplace(MINECRAFT, "destroy", "()V", MinecraftLifecycle.class, "destroy"));
+      out.add(new BodyReplace(COMMON_LISTENER, "showDialog",
+         "(Lnet/minecraft/core/Holder;Lnet/minecraft/client/gui/screens/dialog/DialogConnectionAccess;Lnet/minecraft/client/gui/screens/Screen;)V",
+         DialogHandling.class, "showDialog"));
+      out.add(new BodyReplace(COMMON_LISTENER, "clearDialog", "()V", DialogHandling.class, "clearDialog"));
    }
 
    /** Layer 1b: chat lines go to the console and the plugin event instead of the GUI. */
@@ -124,6 +132,15 @@ public final class EmlPatches {
       out.add(new BodyReplace(COMMON_LISTENER, "handleResourcePackPop",
          "(Lnet/minecraft/network/protocol/common/ClientboundResourcePackPopPacket;)V",
          ResourcePackHandling.class, "handlePop"));
+   }
+
+   /** Constructor-level hooks that let a registered bridge rewrite the codec and the handshake version. */
+   private static void protocolBridge(final List<Rules.Patch> out) {
+      out.add(new BodyReplace("net/minecraft/network/PacketDecoder", "<init>", "(Lnet/minecraft/network/ProtocolInfo;)V", ProtocolBridgePatch.class, "initDecoder"));
+      out.add(new BodyReplace("net/minecraft/network/PacketEncoder", "<init>", "(Lnet/minecraft/network/ProtocolInfo;)V", ProtocolBridgePatch.class, "initEncoder"));
+      out.add(new BodyReplace("net/minecraft/network/protocol/handshake/ClientIntentionPacket", "<init>",
+         "(ILjava/lang/String;ILnet/minecraft/network/protocol/handshake/ClientIntent;)V", ProtocolBridgePatch.class, "initIntention"));
+      out.add(new Wrap(CONNECTION, "configurePacketHandler", "(Lio/netty/channel/ChannelPipeline;)V", eml.hooks.BotProtocol.class, "onPipeline", true, true));
    }
 
    /**
@@ -185,6 +202,10 @@ public final class EmlPatches {
       // makes it unbounded as a statement, so the body is replaced (see RenderCoupling#noopTabList).
       out.add(new BodyReplace(PACKET_LISTENER, "handleTabListCustomisation", "(Lnet/minecraft/network/protocol/game/ClientboundTabListPacket;)V", RenderCoupling.class, "noopTabList"));
       drop(out, PACKET_LISTENER, "handleSetEntityPassengersPacket", null, "gui");
+      // The dismount hint asks KeyMapping for the key's display name, which reaches GLFW through
+      // InputConstants - absent headless, and a NoClassDefFoundError on every mount.
+      out.add(new BodyReplace(KEY_MAPPING, "getTranslatedKeyMessage", "()Lnet/minecraft/network/chat/Component;",
+         RenderCoupling.class, "translatedKeyMessage"));
       drop(out, PACKET_LISTENER, "handleTitlesClear", null, "gui");
       drop(out, PACKET_LISTENER, "setTitleText", null, "gui");
       drop(out, PACKET_LISTENER, "setSubtitleText", null, "gui");

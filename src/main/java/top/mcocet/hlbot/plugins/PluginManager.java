@@ -71,6 +71,7 @@ public class PluginManager {
    private final Map<String, File> pluginFiles = new HashMap<>();
    private final Map<Plugin, List<RegisteredListener>> listenersByPlugin = new HashMap<>();
    private final Map<Plugin, List<String>> commandsByPlugin = new HashMap<>();
+   private final Map<Plugin, List<ProtocolBridge>> bridgesByPlugin = new HashMap<>();
    private boolean connected;
 
    // ---- Paper-style fault isolation ----
@@ -249,6 +250,29 @@ public class PluginManager {
       }
    }
 
+   /**
+    * Registers a protocol bridge for a plugin. Bridges are deliberately not touched by enable/disable:
+    * they must already be active when the next connection is dialed, and a reconnect happens while the
+    * plugin is in the DISABLED phase.
+    */
+   public synchronized void registerProtocolBridge(final ProtocolBridge bridge, final Plugin plugin) {
+      if (bridge == null || plugin == null) {
+         return;
+      }
+
+      eml.hooks.BotProtocol.register(bridge);
+      this.bridgesByPlugin.computeIfAbsent(plugin, key -> new ArrayList<>()).add(bridge);
+   }
+
+   private void unregisterBridges(final Plugin plugin) {
+      List<ProtocolBridge> bridges = this.bridgesByPlugin.remove(plugin);
+      if (bridges != null) {
+         for (ProtocolBridge bridge : bridges) {
+            eml.hooks.BotProtocol.unregister(bridge);
+         }
+      }
+   }
+
    // ---------- fault isolation (Paper-style) ----------
 
    /** Applies the policy from {@code bot.yml}; the threshold is clamped to at least one failure. */
@@ -351,6 +375,7 @@ public class PluginManager {
       } catch (Throwable t) {
          LOGGER.error("Error while unloading {}", name, t);
       } finally {
+         this.unregisterBridges(plugin);
          this.plugins.remove(name);
          this.pluginFiles.remove(name);
          closeLoader(name);

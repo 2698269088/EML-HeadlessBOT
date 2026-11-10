@@ -29,6 +29,8 @@ public final class Config {
 
    private final File file;
    private Map<String, Object> root;
+   /** False until the file has actually been read once; {@link #save()} refuses to write before that. */
+   private boolean loaded;
 
    Config(final File file) {
       this.file = file;
@@ -38,6 +40,8 @@ public final class Config {
    /** Reads the file if present; keeps current contents when it is missing or unreadable. */
    @SuppressWarnings("unchecked")
    void load() {
+      this.loaded = true;
+
       if (!this.file.isFile()) {
          return;
       }
@@ -183,7 +187,17 @@ public final class Config {
       return this.root;
    }
 
+   /**
+    * Writes the in-memory tree back to the file.
+    *
+    * <p>If the file was never read, it is read first: writing a tree that does not contain what is on disk
+    * would silently erase the user's settings the first time any command touches a config.
+    */
    public void save() {
+      if (!this.loaded) {
+         load();
+      }
+
       try {
          File parent = this.file.getParentFile();
          if (parent != null) {

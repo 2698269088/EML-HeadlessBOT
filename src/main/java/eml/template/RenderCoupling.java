@@ -102,6 +102,17 @@ public final class RenderCoupling {
    }
 
    /**
+    * {@code KeyMapping.getTranslatedKeyMessage()}: vanilla builds the key's display name through
+    * {@code InputConstants}, whose key-name supplier calls GLFW - a class the headless runtime does not
+    * have. Reached by {@code ClientPacketListener.handleSetEntityPassengersPacket} for the "press ... to
+    * dismount" hint, which made mounting a vehicle crash the client with {@code NoClassDefFoundError}.
+    * There is no keyboard to name keys for, so the answer is an empty component.
+    */
+   public static net.minecraft.network.chat.Component translatedKeyMessage(final net.minecraft.client.KeyMapping self) {
+      return net.minecraft.network.chat.Component.empty();
+   }
+
+   /**
     * {@code DebugScreenOverlay.<init>(Minecraft)}: the vanilla constructor asks
     * {@code RenderSystem.getSequentialBuffer(...)} for a crosshair index buffer and then fills a vertex
     * buffer, which threw "Rendersystem called from wrong thread" the moment the play listener asked for the

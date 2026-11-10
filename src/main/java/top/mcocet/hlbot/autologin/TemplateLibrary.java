@@ -18,7 +18,7 @@ final class TemplateLibrary {
    private static final Logger LOGGER = LoggerFactory.getLogger("AutoLogin");
 
    private static final Set<String> NAMES = new LinkedHashSet<>(
-      List.of("authme", "register-then-login", "join-login-fallback"));
+      List.of("authme", "authme-dialog", "register-then-login", "join-login-fallback"));
 
    private static final String AUTHME = """
       rules:
@@ -79,6 +79,41 @@ final class TemplateLibrary {
             - stage: LOGGED_IN
       """;
 
+   private static final String AUTHME_DIALOG = """
+      rules:
+        - id: tpl-authme-dialog-login
+          priority: 10
+          once: true
+          notStage: [LOGGED_IN, LOGGING_IN, REGISTERING]
+          when:
+            types: [DIALOG_OPEN]
+            regex: "(?i)(登录|登陆|login)"
+          actions:
+            - stage: LOGGING_IN
+            - dialogInput: { key: password, value: "{{password}}" }
+            - dialogClick: "authme:prejoin-login/submit"
+        - id: tpl-authme-dialog-register
+          priority: 20
+          once: true
+          notStage: [LOGGED_IN, LOGGING_IN, REGISTERING]
+          when:
+            types: [DIALOG_OPEN]
+            regex: "(?i)(注册|register)"
+          actions:
+            - stage: REGISTERING
+            - dialogInput: { key: password, value: "{{password}}" }
+            - dialogInput: { key: confirm, value: "{{password}}" }
+            - dialogClick: "authme:prejoin-register/submit"
+        - id: tpl-authme-dialog-done
+          priority: 5
+          when:
+            types: [SYSTEM_CHAT]
+            regex: "(?i)(logged in|authentication successful|you are now logged in|registered successfully|登录成功|登陆成功|注册成功)"
+          actions:
+            - stage: LOGGED_IN
+            - log: "authme dialog template: logged in"
+      """;
+
    private static final String JOIN_LOGIN_FALLBACK = """
       rules:
         - id: tpl-join-login-fallback
@@ -102,6 +137,7 @@ final class TemplateLibrary {
    static List<Rule> expand(final String name) {
       String yaml = switch (name == null ? "" : name.trim()) {
          case "authme" -> AUTHME;
+         case "authme-dialog" -> AUTHME_DIALOG;
          case "register-then-login" -> REGISTER_THEN_LOGIN;
          case "join-login-fallback" -> JOIN_LOGIN_FALLBACK;
          default -> null;

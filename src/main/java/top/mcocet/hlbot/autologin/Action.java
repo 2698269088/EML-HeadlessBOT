@@ -17,13 +17,17 @@ import java.util.Map;
  *   closeContainer = 0
  *   containerButton = { containerId = 0, button = 1 }
  *   containerClick  = { slot = 11, button = 0 }
+ *   dialogInput     = { key = password, value = "{{password}}" }
+ *   dialogClick     = "0"
+ *   dialogCancel    = true
  * </pre>
  *
  * String fields support {@code {{name}}} interpolation against session variables and captures.
  */
 final class Action {
    enum Kind {
-      COMMAND, CHAT, STAGE, SET_VARIABLE, LOG, SELECT_SLOT, USE_ITEM, CLOSE_CONTAINER, CONTAINER_BUTTON, CONTAINER_CLICK, NONE
+      COMMAND, CHAT, STAGE, SET_VARIABLE, LOG, SELECT_SLOT, USE_ITEM, CLOSE_CONTAINER, CONTAINER_BUTTON, CONTAINER_CLICK,
+      DIALOG_INPUT, DIALOG_CLICK, DIALOG_CANCEL, NONE
    }
 
    private final Kind kind;
@@ -105,6 +109,21 @@ final class Action {
          args.put("slot", sub.getOrDefault("slot", 0));
          args.put("button", sub.getOrDefault("button", 0));
          return new Action(Kind.CONTAINER_CLICK, null, null, args);
+      }
+
+      if (m.containsKey("dialogInput")) {
+         Map<String, Object> sub = YamlUtil.map(m.get("dialogInput"));
+         Map<String, Object> args = new LinkedHashMap<>();
+         args.put("key", YamlUtil.text(sub.get("key"), ""));
+         return new Action(Kind.DIALOG_INPUT, YamlUtil.text(sub.get("value"), ""), null, args);
+      }
+
+      if (m.containsKey("dialogClick")) {
+         return new Action(Kind.DIALOG_CLICK, YamlUtil.text(m.get("dialogClick"), ""), null, null);
+      }
+
+      if (m.containsKey("dialogCancel")) {
+         return new Action(Kind.DIALOG_CANCEL, null, null, null);
       }
 
       return new Action(Kind.NONE, null, null, null);
